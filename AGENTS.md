@@ -56,11 +56,14 @@ one short sentence per line; it becomes What to Test, What's New and the GitHub
 release notes.
 
 1. `admit` checks the tag and waits for CI on the same commit to pass.
-2. `testflight` selects one build number higher than all App Store Connect
-   builds and pending uploads, archives unsigned with the tag as
-   `MARKETING_VERSION` and that `CURRENT_PROJECT_VERSION`, ad-hoc signs each
+2. `testflight` reuses the build App Store Connect already holds for the tag's
+   version, or selects one build number higher than all builds and pending
+   uploads. After an earlier attempt began uploading, it waits up to 15 minutes
+   for that build to appear and fails if none does. It archives unsigned with
+   the tag as `MARKETING_VERSION` and that `CURRENT_PROJECT_VERSION`, ad-hoc signs each
    bundle with its entitlements, exports through Xcode cloud signing without
-   renumbering, checks the exported entitlements and uploads. Its build-number
+   renumbering, checks the exported entitlements and uploads. An
+   existing build skips archiving, signing and uploading. Its build-number
    output makes both following App Store Connect jobs select that exact upload,
    including on retries.
    An app with a server waits for its deployed version where `release.yml`

@@ -35,10 +35,15 @@
 - **One exact upload.** The serialized TestFlight job selects max+1 across all
   uploaded builds and pending uploads, injects that number into the archive,
   and disables Xcode's export renumbering. Both App Store Connect jobs consume
-  the job output and filter that exact build. Selecting the latest build by
-  marketing version can falsely accept an earlier upload while a retry is
-  still processing. Retrying the upload job selects a fresh number; retrying
-  downstream jobs keeps the original output.
+  the job output and filter that exact build. Each version belongs to one
+  immutable tag, so retries reuse the build or processing upload already held
+  for that version and skip archiving, signing and uploading. GitHub's step
+  history fences any earlier attempt that started the upload: wait up to 15
+  minutes for Apple's list to show it, then fail rather than upload again.
+  The upload has its own named step so a failed entitlement check creates no
+  uncertainty. A stored fence artifact would expire and duplicate Apple's
+  build inventory; selecting a fresh number on every retry could send testers
+  a duplicate after a lost upload acknowledgement.
 - **Owned screenshot reservations.** Every reserved image ID is queued before
   transfer. Uploads and placement share one cleanup scope; workers finish
   before cleanup deletes any unplaced reservations. This also covers failures
