@@ -187,4 +187,6 @@ jobs:
       - name: Publish the tag message as the release notes
         run: |
           tag=$(gh api "repos/$GH_REPO/git/ref/tags/$VERSION" --jq .object.sha)
-          gh api "repos/$GH_REPO/git/tags/$tag" --jq .message | gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file -
+          gh api "repos/$GH_REPO/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
+          [[ -s $RUNNER_TEMP/notes.md ]] || { echo "::error::The $VERSION tag has no message to publish."; exit 1; }
+          gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
