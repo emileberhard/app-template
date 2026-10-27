@@ -19,6 +19,14 @@
 - **Cloud signing.** Releases archive unsigned and export with an App Store
   Connect key, so CI holds no certificate or profile. `entitlements.json` says
   what each bundle claims, and the release checks the export against it.
+- **Sign nested frameworks before app bundles.** The unsigned archive can
+  contain linker ad-hoc signatures or unsigned frameworks. Ad-hoc sign every
+  embedded framework deepest first before sealing app bundles, including code
+  inside extensions. Xcode's cloud export then replaces these signatures;
+  reject the export unless every framework has an Apple Distribution authority.
+  An entitlement check alone missed an invalid Sentry signature during Pingo's
+  migration. Removing signatures instead leaves nested code unsigned before
+  app signing, so it is not the shared signing path.
 - **Hosted release runners.** Signing and uploads run on GitHub's macOS
   runners. A private repository compiles CI on its own Mac runner to save
   billed minutes, and fails rather than fall back to them.

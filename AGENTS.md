@@ -61,8 +61,9 @@ release notes.
    uploads. After an earlier attempt began uploading, it waits up to 15 minutes
    for that build to appear and fails if none does. It archives unsigned with
    the tag as `MARKETING_VERSION` and that `CURRENT_PROJECT_VERSION`, ad-hoc signs each
-   bundle with its entitlements, exports through Xcode cloud signing without
-   renumbering, checks the exported entitlements and uploads. An
+   embedded framework deepest first, then each app bundle with its entitlements,
+   exports through Xcode cloud signing without renumbering, checks the exported
+   entitlements and every framework's distribution signature and uploads. An
    existing build skips archiving, signing and uploading. Its build-number
    output makes both following App Store Connect jobs select that exact upload,
    including on retries.
