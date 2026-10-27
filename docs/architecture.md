@@ -61,6 +61,12 @@
   transfer. Uploads and placement share one cleanup scope; workers finish
   before cleanup deletes any unplaced reservations. This also covers failures
   during transfer, which previously escaped cleanup.
+- **Confirm screenshot readiness.** Apple returns both the live `ACTIVE`
+  placement state and the documented parent review states. Only those finish
+  preparation; `FAILED` reports Apple's details, and every other state waits
+  within the existing 40-minute bound, with the last states in a timeout.
+  Treating every state except `ASSET_PROCESSING` as ready let a `PENDING`
+  iPhone placement pass while its image was still processing.
 - **Screenshots from the app.** `capture` launches a Debug build in the
   simulator with `STARTER_CAPTURE` set; the app snapshots its own window once it
   is on screen and exits, so captures never race the launch and never drift
