@@ -35,6 +35,21 @@ class BuildIdentityTests(unittest.TestCase):
         ]):
             self.assertEqual(13, asc.next_build_number("app"))
 
+    def test_a_dotted_pending_upload_sets_the_next_global_build(self):
+        with patch.object(asc, "api", side_effect=[
+            [{"attributes": {"version": "30"}}],
+            [{"attributes": {"cfBundleVersion": "42.9.1"}}],
+        ]):
+            self.assertEqual(43, asc.next_build_number("app"))
+
+    def test_unrecognized_build_versions_stop_allocation(self):
+        for version in ("", "1.2.3.4", "1.beta", "１"):
+            with self.subTest(version=version), patch.object(asc, "api", side_effect=[
+                [{"attributes": {"version": version}}], [],
+            ]):
+                with self.assertRaisesRegex(SystemExit, "CFBundleVersion"):
+                    asc.next_build_number("app")
+
     def test_acceptance_filters_the_exact_uploaded_build(self):
         with patch.object(asc, "api", return_value=[]) as api:
             self.assertIsNone(asc.processed_build("app", "1.3.2", "11"))
@@ -53,7 +68,13 @@ class BuildIdentityTests(unittest.TestCase):
 class UploadFenceTests(unittest.TestCase):
     def test_a_build_already_uploaded_for_the_version_is_reused(self):
         with patch.object(asc, "uploaded_build_numbers", return_value=["9", "12"]), patch.object(asc, "next_build_number") as reserve:
-            self.assertEqual((12, True), asc.reserve_build("app", "1.3.2", fenced=False))
+            self.assertEqual(("12", True), asc.reserve_build("app", "1.3.2", fenced=False))
+            reserve.assert_not_called()
+
+    def test_a_dotted_build_is_reused_with_its_exact_apple_version(self):
+        with patch.object(asc, "uploaded_build_numbers", return_value=["9", "12.2", "12.7.2"]), \
+             patch.object(asc, "next_build_number") as reserve:
+            self.assertEqual(("12.7.2", True), asc.reserve_build("app", "1.3.2", fenced=True))
             reserve.assert_not_called()
 
     def test_a_first_attempt_without_an_upload_reserves_the_next_number(self):
@@ -65,7 +86,7 @@ class UploadFenceTests(unittest.TestCase):
     def test_a_fenced_rerun_waits_for_the_build_and_never_reserves_a_second_number(self):
         with patch.object(asc, "uploaded_build_numbers", side_effect=[[], [], ["12"]]), patch.object(asc, "next_build_number") as reserve, \
              patch.object(asc.time, "sleep"):
-            self.assertEqual((12, True), asc.reserve_build("app", "1.3.2", fenced=True))
+            self.assertEqual(("12", True), asc.reserve_build("app", "1.3.2", fenced=True))
             reserve.assert_not_called()
 
     def test_a_fenced_rerun_fails_when_no_build_appears(self):

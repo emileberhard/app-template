@@ -43,13 +43,15 @@
   take seconds. An unprivileged archive job handing its archive to the
   privileged one would overlap the CI wait at the cost of an artifact transfer;
   measure that before adding it.
-- **One exact upload.** The serialized TestFlight job selects max+1 across all
-  uploaded builds and pending uploads, injects that number into the archive,
+- **One exact upload.** The serialized TestFlight job selects one above the
+  largest first component across all uploaded builds and pending uploads,
+  accepting Apple's one to three numeric components. It injects that integer
+  into the archive,
   and disables Xcode's export renumbering. Both App Store Connect jobs consume
   the job output and filter that exact build. Each version belongs to one
   immutable tag, so retries reuse the build or processing upload already held
-  for that version and skip archiving, signing and uploading. GitHub's step
-  history fences any earlier attempt that started the upload: wait up to 15
+  for that version with its full original build number and skip archiving,
+  signing and uploading. GitHub's step history fences any earlier attempt that started the upload: wait up to 15
   minutes for Apple's list to show it, then fail rather than upload again.
   The upload has its own named step so a failed entitlement check creates no
   uncertainty. A stored fence artifact would expire and duplicate Apple's

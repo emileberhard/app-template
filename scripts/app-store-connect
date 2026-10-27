@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import random
+import re
 import subprocess
 import sys
 import time
@@ -167,19 +168,24 @@ def reserve_build(app, version, fenced):
             break
         time.sleep(20)
     if numbers:
-        return max(int(number) for number in numbers), True
+        return max(numbers, key=build_components), True
     if fenced:
         sys.exit(f"An earlier attempt started uploading {version}, but App Store Connect shows no build for it after 15 minutes. Inspect App Store Connect; do not upload again blindly.")
     return next_build_number(app), False
+
+
+def build_components(number):
+    if not isinstance(number, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", number):
+        sys.exit(f"App Store Connect contains an unrecognized CFBundleVersion: {number!r}.")
+    parts = tuple(int(part) for part in number.split("."))
+    return parts + (0,) * (3 - len(parts))
 
 
 def next_build_number(app):
     builds = api("GET", "builds", **{"filter[app]": app, "fields[builds]": "version", "limit": 200})
     uploads = api("GET", f"apps/{app}/buildUploads", **{"fields[buildUploads]": "cfBundleVersion", "limit": 200})
     versions = [b["attributes"]["version"] for b in builds] + [u["attributes"]["cfBundleVersion"] for u in uploads]
-    if any(not version.isdecimal() for version in versions):
-        sys.exit("Use integer build numbers; App Store Connect contains a non-integer build version.")
-    return max((int(version) for version in versions), default=0) + 1
+    return max((build_components(version)[0] for version in versions), default=0) + 1
 
 
 def processed_build(app, version, number):

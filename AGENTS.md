@@ -57,8 +57,10 @@ release notes.
 
 1. `admit` checks the tag and waits for CI on the same commit to pass.
 2. `testflight` reuses the build App Store Connect already holds for the tag's
-   version, or selects one build number higher than all builds and pending
-   uploads. After an earlier attempt began uploading, it waits up to 15 minutes
+   version, preserving its full build number, or selects an integer above the
+   largest first component of all builds and pending uploads (one to three
+   numeric components). After an earlier attempt began uploading, it waits up to
+   15 minutes
    for that build to appear and fails if none does. It archives unsigned with
    the tag as `MARKETING_VERSION` and that `CURRENT_PROJECT_VERSION`, ad-hoc signs each
    embedded framework deepest first, then each app bundle with its entitlements,
