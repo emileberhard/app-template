@@ -1,8 +1,9 @@
 # Starter
 
 Starter is a minimal iPhone and iPad app that shows the days left in the year.
-Replace this paragraph with what the app is and who uses it, and keep the rest
-of this file true as the app grows.
+Replace this paragraph with what the app is and who uses it, replace the
+days-left screen and Core's tracer with the product's own, and keep the rest of
+this file true as the app grows.
 
 ## Layout
 
