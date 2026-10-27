@@ -12,3 +12,11 @@ buildable SwiftUI app with a portable Swift core, CI, and a release that takes
 a pushed version tag through TestFlight to a prepared App Store version. To
 start an app, create a repository from this template and rename `Starter`
 everywhere, in file contents and paths. Licensed under the [MIT License](LICENSE).
+
+## Dependency updates
+
+Dependabot updates GitHub Actions. `Core` has no external packages, so it
+needs no Swift updater. Add a Swift entry only for a declarative `Package.swift`
+that declares remote dependencies and whose tools version Dependabot supports.
+An Xcode project's `Package.resolved` alone is not a supported Swift manifest;
+maintainers update those dependencies in Xcode and commit the project and lockfile.
