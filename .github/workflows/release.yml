@@ -205,4 +205,8 @@ jobs:
           tag=$(gh api "repos/$GH_REPO/git/ref/tags/$VERSION" --jq .object.sha)
           gh api "repos/$GH_REPO/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
           [[ -s $RUNNER_TEMP/notes.md ]] || { echo "::error::The $VERSION tag has no message to publish."; exit 1; }
-          gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          newest=$(gh api --paginate "repos/$GH_REPO/git/matching-refs/tags" --jq '.[].ref | ltrimstr("refs/tags/")' \
+            | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -1)
+          latest=()
+          [[ $VERSION == "$newest" ]] || latest=(--latest=false)
+          gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${latest[@]}"

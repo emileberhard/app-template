@@ -70,7 +70,8 @@ release notes.
 4. `app-store` captures the screenshots and prepares the App Store version with
    manual release, short of App Review. A version still in review leaves it
    pending with a notice.
-5. `github-release` publishes the release.
+5. `github-release` publishes the release and marks it Latest only when its
+   version is still the newest plain version tag, including on a later retry.
 
 Submitting for App Review and releasing on the App Store stay manual. Rerun a
 transiently failed job from the tag's own run, and only while that tag is still
