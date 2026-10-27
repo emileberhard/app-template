@@ -32,6 +32,17 @@
   take seconds. An unprivileged archive job handing its archive to the
   privileged one would overlap the CI wait at the cost of an artifact transfer;
   measure that before adding it.
+- **One exact upload.** The serialized TestFlight job selects max+1 across all
+  uploaded builds and pending uploads, injects that number into the archive,
+  and disables Xcode's export renumbering. Both App Store Connect jobs consume
+  the job output and filter that exact build. Selecting the latest build by
+  marketing version can falsely accept an earlier upload while a retry is
+  still processing. Retrying the upload job selects a fresh number; retrying
+  downstream jobs keeps the original output.
+- **Owned screenshot reservations.** Every reserved image ID is queued before
+  transfer. Uploads and placement share one cleanup scope; workers finish
+  before cleanup deletes any unplaced reservations. This also covers failures
+  during transfer, which previously escaped cleanup.
 - **Screenshots from the app.** `capture` launches a Debug build in the
   simulator with `STARTER_CAPTURE` set; the app snapshots its own window once it
   is on screen and exits, so captures never race the launch and never drift

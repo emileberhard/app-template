@@ -3,6 +3,7 @@ import base64
 import concurrent.futures
 import json
 import os
+import queue
 import random
 import subprocess
 import sys
@@ -55,9 +56,19 @@ def send(request):
 def api(method, path, data=None, **params):
     url = API + path + ("?" + urllib.parse.urlencode(params) if params else "")
     body = json.dumps({"data": data}).encode() if data else None
-    response = send(urllib.request.Request(url, body, method=method, headers={
-        "Authorization": f"Bearer {token()}", "Content-Type": "application/json"}))
-    return json.loads(response)["data"] if response else None
+    records = []
+    while True:
+        response = send(urllib.request.Request(url, body, method=method, headers={
+            "Authorization": f"Bearer {token()}", "Content-Type": "application/json"}))
+        if not response:
+            return None
+        document = json.loads(response)
+        if not isinstance(document["data"], list):
+            return document["data"]
+        records.extend(document["data"])
+        url = document.get("links", {}).get("next")
+        if not url:
+            return records
 
 
 def link(kind, identifier):
@@ -90,11 +101,12 @@ def draft_version(app, version):
     return draft["id"], released
 
 
-def upload(library, slide):
+def upload(library, slide, created):
     contents = slide.read_bytes()
     image = api("POST", "appAssetLibraryImages", {"type": "appAssetLibraryImages",
                 "attributes": {"fileName": slide.name, "fileSize": len(contents), "category": "APP_SCREENSHOTS_AND_PREVIEWS"},
                 "relationships": {"assetLibrary": link("appAssetLibraries", library)}})
+    created.put(image["id"])
     for part in image["attributes"]["uploadOperations"]:
         send(urllib.request.Request(part["url"], contents[part["offset"]:part["offset"] + part["length"]], method=part["method"],
                                     headers={header["name"]: header["value"] for header in part["requestHeaders"]}))
@@ -139,9 +151,18 @@ def wait(description, check):
     return result
 
 
-def processed_build(app, version):
+def next_build_number(app):
+    builds = api("GET", "builds", **{"filter[app]": app, "fields[builds]": "version", "limit": 200})
+    uploads = api("GET", f"apps/{app}/buildUploads", **{"fields[buildUploads]": "cfBundleVersion", "limit": 200})
+    versions = [b["attributes"]["version"] for b in builds] + [u["attributes"]["cfBundleVersion"] for u in uploads]
+    if any(not version.isdecimal() for version in versions):
+        sys.exit("Use integer build numbers; App Store Connect contains a non-integer build version.")
+    return max((int(version) for version in versions), default=0) + 1
+
+
+def processed_build(app, version, number):
     builds = api("GET", "builds", sort="-uploadedDate", limit=1, **{"filter[app]": app, "filter[preReleaseVersion.version]": version,
-                 "filter[preReleaseVersion.platform]": "IOS", "filter[buildAudienceType]": "APP_STORE_ELIGIBLE"})
+                 "filter[preReleaseVersion.platform]": "IOS", "filter[version]": number, "filter[buildAudienceType]": "APP_STORE_ELIGIBLE"})
     state = builds[0]["attributes"]["processingState"] if builds else "PROCESSING"
     if state in {"FAILED", "INVALID"}:
         sys.exit(f"The {version} build is {state}.")
@@ -180,12 +201,12 @@ def processed_screenshots(placements):
     return None if any(a["state"] == "ASSET_PROCESSING" for a in attributes) else True
 
 
-def testflight(app, version, notes):
-    build = wait(f"The {version} build", lambda: processed_build(app, version))
+def testflight(app, version, number, notes):
+    build = wait(f"The {version} build", lambda: processed_build(app, version, number))
     submit_beta(app, version, build, notes)
 
 
-def app_store(app, version, screenshots, notes):
+def app_store(app, version, number, screenshots, notes):
     root = Path(screenshots)
     slides = {directory.name: sorted(p for p in directory.glob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
               for directory in root.iterdir() if directory.is_dir()} if root.is_dir() else {}
@@ -199,11 +220,12 @@ def app_store(app, version, screenshots, notes):
         return
     library = api("GET", f"apps/{app}/assetLibrary")["id"]
     images = {}
-    with concurrent.futures.ThreadPoolExecutor(sum(map(len, slides.values()))) as pool:
-        for display, files in slides.items():
-            images[display] = list(pool.map(lambda slide: upload(library, slide), files))
+    created = queue.SimpleQueue()
     placements, displaced = [], set()
     try:
+        with concurrent.futures.ThreadPoolExecutor(sum(map(len, slides.values()))) as pool:
+            for display, files in slides.items():
+                images[display] = list(pool.map(lambda slide: upload(library, slide, created), files))
         for localization in api("GET", f"appStoreVersions/{version_id}/appStoreVersionLocalizations", limit=50):
             if released:
                 api("PATCH", f"appStoreVersionLocalizations/{localization['id']}", {"type": "appStoreVersionLocalizations",
@@ -215,20 +237,23 @@ def app_store(app, version, screenshots, notes):
                 print(f"Placed {len(identifiers)} {display} screenshots on {localization['attributes']['locale']}.", file=sys.stderr)
     except BaseException:
         try:
-            delete_unplaced(image for identifiers in images.values() for image in identifiers)
+            reserved = []
+            while not created.empty():
+                reserved.append(created.get_nowait())
+            delete_unplaced(reserved)
         except RequestFailed as failure:
             print(f"Could not remove this run's unplaced screenshots: {failure}", file=sys.stderr)
         raise
     delete_unplaced(displaced)
     if not released:
         print("Left What's New empty, because the App Store shows it only from the second release.", file=sys.stderr)
-    build = wait(f"The {version} build", lambda: processed_build(app, version))
+    build = wait(f"The {version} build", lambda: processed_build(app, version, number))
     api("PATCH", f"appStoreVersions/{version_id}/relationships/build", {"type": "builds", "id": build})
     wait("The screenshots", lambda: processed_screenshots(placements))
     print(f"App Store version {version} is ready to submit for review.", file=sys.stderr)
 
 
-def main(command, version, *paths):
+def main(command, *arguments):
     missing = [name for name in ("APP_STORE_CONNECT_KEY_ID", "APP_STORE_CONNECT_ISSUER_ID", "APP_STORE_CONNECT_KEY_PATH", "APP_BUNDLE_ID")
                if not os.environ.get(name)]
     if missing:
@@ -236,16 +261,21 @@ def main(command, version, *paths):
     apps = api("GET", "apps", **{"filter[bundleId]": os.environ["APP_BUNDLE_ID"]})
     if not apps:
         sys.exit(f"No app has the bundle ID {os.environ['APP_BUNDLE_ID']}.")
+    if command == "build-number":
+        print(next_build_number(apps[0]["id"]))
+        return
+    version, number, *paths = arguments
     notes = Path(paths[-1]).read_text().strip()
     if command == "testflight":
-        testflight(apps[0]["id"], version, notes)
+        testflight(apps[0]["id"], version, number, notes)
     else:
-        app_store(apps[0]["id"], version, paths[0], notes)
+        app_store(apps[0]["id"], version, number, paths[0], notes)
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] not in (["testflight"], ["app-store"]) or len(sys.argv) != {"testflight": 4, "app-store": 5}[sys.argv[1]]:
-        sys.exit("Usage: scripts/app-store-connect testflight VERSION NOTES\n       scripts/app-store-connect app-store VERSION SCREENSHOTS NOTES")
+    counts = {"build-number": 2, "testflight": 5, "app-store": 6}
+    if len(sys.argv) != counts.get(sys.argv[1] if len(sys.argv) > 1 else "", 0):
+        sys.exit("Usage: scripts/app-store-connect build-number\n       scripts/app-store-connect testflight VERSION BUILD NOTES\n       scripts/app-store-connect app-store VERSION BUILD SCREENSHOTS NOTES")
     try:
         main(*sys.argv[1:])
     except RequestFailed as failure:
