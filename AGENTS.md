@@ -46,7 +46,8 @@ CI tests Core on Linux and compiles the app on every push to `main` and every
 pull request, with the Xcode `.xcode-version` names. A private repository
 compiles on its own Mac runner, named by the `MAC_CI_RUNNER` variable as a JSON
 label array, and fails without it, because hosted macOS minutes are billed; a
-public one compiles hosted. Releases always run on hosted runners. Builds use
+public one compiles hosted. The release signs and uploads on hosted runners; a
+server on a machine of your own deploys from a job on that machine's runner. Builds use
 only the package versions in the committed `Package.resolved`.
 
 Pushing an annotated `MAJOR.MINOR.PATCH` tag on `main`, higher than every other
