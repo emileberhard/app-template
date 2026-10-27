@@ -15,6 +15,13 @@ struct StarterApp: App {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            #if DEBUG
+            .task {
+                if let directory = Capture.directory {
+                    await Capture.screen(into: directory)
+                }
+            }
+            #endif
         }
     }
 }

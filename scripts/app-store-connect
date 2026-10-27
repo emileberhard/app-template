@@ -16,8 +16,6 @@ API = "https://api.appstoreconnect.apple.com/v1/"
 EDITABLE = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"}
 RELEASED = {"READY_FOR_DISTRIBUTION", "PROCESSING_FOR_DISTRIBUTION", "REPLACED_WITH_NEW_VERSION"}
 IN_BETA = {"WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "BETA_APPROVED", "READY_FOR_BETA_TESTING", "IN_BETA_TESTING"}
-UNPLACED_STATES = "AWAITING_UPLOAD,UPLOAD_COMPLETE,FAILED,COMPLETE,PREPARE_FOR_SUBMISSION"
-DISPLAYS = ("IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE", "IPAD_PRO_3GEN_129")
 DEADLINE = time.monotonic() + 40 * 60
 
 
@@ -106,8 +104,9 @@ def upload(library, slide):
 
 def place(localization, images, display):
     screenshots = {"placementType": "APP_SCREENSHOT", "placementGroup": display}
-    old = api("GET", f"appStoreVersionLocalizations/{localization}/placements", limit=50,
+    old = api("GET", f"appStoreVersionLocalizations/{localization}/placements", limit=50, include="image",
               **{f"filter[{key}]": value for key, value in screenshots.items()})
+    displaced = {p["relationships"]["image"]["data"]["id"] for p in old}
     for placement in old:
         api("DELETE", f"appAssetLibraryPlacements/{placement['id']}")
     placements = [api("POST", "appAssetLibraryPlacements", {"type": "appAssetLibraryPlacements", "attributes": screenshots,
@@ -118,16 +117,15 @@ def place(localization, images, display):
         "attributes": {"placementGroup": display},
         "relationships": {"orderedPlacements": {"data": [{"type": "appAssetLibraryPlacements", "id": p} for p in placements]},
                           "appStoreVersionLocalization": link("appStoreVersionLocalizations", localization)}})
-    return placements
+    return placements, displaced
 
 
-def delete_unplaced(library):
-    images = api("GET", f"appAssetLibraries/{library}/images", limit=200, include="placements", **{"limit[placements]": 1,
-                 "filter[category]": "APP_SCREENSHOTS_AND_PREVIEWS", "filter[state]": UNPLACED_STATES})
+def delete_unplaced(images):
     for image in images:
-        if not image["relationships"]["placements"]["data"]:
+        placements = api("GET", f"appAssetLibraryImages/{image}", include="placements", **{"limit[placements]": 1})
+        if not placements["relationships"]["placements"]["data"]:
             try:
-                api("DELETE", f"appAssetLibraryImages/{image['id']}")
+                api("DELETE", f"appAssetLibraryImages/{image}")
             except RequestFailed as failure:
                 if "ASSET_PREVIOUSLY_SUBMITTED_FOR_REVIEW" not in str(failure):
                     raise
@@ -160,8 +158,10 @@ def submit_beta(app, version, build, notes):
         api("PATCH", f"betaBuildLocalizations/{localization['id']}", {"type": "betaBuildLocalizations",
             "id": localization["id"], "attributes": {"whatsNew": notes}})
     groups = api("GET", "betaGroups", limit=200, **{"filter[app]": app, "filter[isInternalGroup]": "false"})
-    if groups:
-        api("POST", f"builds/{build}/relationships/betaGroups", [{"type": "betaGroups", "id": g["id"]} for g in groups])
+    if not groups:
+        print(f"The {version} build reaches the internal testers; the app has no external group to submit it to.", file=sys.stderr)
+        return
+    api("POST", f"builds/{build}/relationships/betaGroups", [{"type": "betaGroups", "id": g["id"]} for g in groups])
     state = api("GET", f"builds/{build}/buildBetaDetail")["attributes"]["externalBuildState"]
     if state == "READY_FOR_BETA_SUBMISSION":
         api("POST", "betaAppReviewSubmissions", {"type": "betaAppReviewSubmissions", "relationships": {"build": link("builds", build)}})
@@ -185,8 +185,12 @@ def testflight(app, version, notes):
     submit_beta(app, version, build, notes)
 
 
-def app_store(app, version, slides, notes):
-    slides = {display: sorted(p for p in (Path(slides) / display).glob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg"}) for display in DISPLAYS}
+def app_store(app, version, screenshots, notes):
+    root = Path(screenshots)
+    slides = {directory.name: sorted(p for p in directory.glob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
+              for directory in root.iterdir() if directory.is_dir()} if root.is_dir() else {}
+    if not slides:
+        sys.exit(f"Capture the screenshots into one {root} subdirectory per placement group first.")
     for display, files in slides.items():
         if not 1 <= len(files) <= 10:
             sys.exit(f"Provide 1–10 PNG or JPEG screenshots in {display}.")
@@ -198,15 +202,24 @@ def app_store(app, version, slides, notes):
     with concurrent.futures.ThreadPoolExecutor(sum(map(len, slides.values()))) as pool:
         for display, files in slides.items():
             images[display] = list(pool.map(lambda slide: upload(library, slide), files))
-    placements = []
-    for localization in api("GET", f"appStoreVersions/{version_id}/appStoreVersionLocalizations", limit=50):
-        if released:
-            api("PATCH", f"appStoreVersionLocalizations/{localization['id']}", {"type": "appStoreVersionLocalizations",
-                "id": localization["id"], "attributes": {"whatsNew": notes}})
-        for display, identifiers in images.items():
-            placements += place(localization["id"], identifiers, display)
-            print(f"Placed {len(identifiers)} {display} screenshots on {localization['attributes']['locale']}.", file=sys.stderr)
-    delete_unplaced(library)
+    placements, displaced = [], set()
+    try:
+        for localization in api("GET", f"appStoreVersions/{version_id}/appStoreVersionLocalizations", limit=50):
+            if released:
+                api("PATCH", f"appStoreVersionLocalizations/{localization['id']}", {"type": "appStoreVersionLocalizations",
+                    "id": localization["id"], "attributes": {"whatsNew": notes}})
+            for display, identifiers in images.items():
+                placed, replaced = place(localization["id"], identifiers, display)
+                placements += placed
+                displaced |= replaced
+                print(f"Placed {len(identifiers)} {display} screenshots on {localization['attributes']['locale']}.", file=sys.stderr)
+    except BaseException:
+        try:
+            delete_unplaced(image for identifiers in images.values() for image in identifiers)
+        except RequestFailed as failure:
+            print(f"Could not remove this run's unplaced screenshots: {failure}", file=sys.stderr)
+        raise
+    delete_unplaced(displaced)
     if not released:
         print("Left What's New empty, because the App Store shows it only from the second release.", file=sys.stderr)
     build = wait(f"The {version} build", lambda: processed_build(app, version))

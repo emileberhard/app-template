@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import json
+import os
+import shutil
 import signal
 import subprocess
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DISPLAYS = {
     "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE": "iPhone 18 Pro",
-    "IPAD_PRO_3GEN_129": "iPad Pro 13-inch (M5)",
+    "IPAD_13_PROFILE": "iPad Pro 13-inch (M5)",
 }
 
 
@@ -30,6 +31,7 @@ def main():
     build = ROOT / ".local" / "simulator-build"
     run("xcodebuild", "-quiet", "-project", ROOT / "Apple/Starter.xcodeproj", "-scheme", "Starter",
         "-configuration", "Debug", "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", build,
+        "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile", "-skipPackageUpdates",
         "CODE_SIGNING_ALLOWED=NO", "COMPILER_INDEX_STORE_ENABLE=NO", "build")
     app = build / "Build/Products/Debug-iphonesimulator/Starter.app"
     bundle = run("plutil", "-extract", "CFBundleIdentifier", "raw", app / "Info.plist")
@@ -37,14 +39,19 @@ def main():
         udid = run("xcrun", "simctl", "create", "Starter Screenshots", device, runtime["identifier"])
         try:
             run("xcrun", "simctl", "bootstatus", udid, "-b")
-            run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
             run("xcrun", "simctl", "install", udid, app)
-            run("xcrun", "simctl", "launch", udid, bundle)
-            time.sleep(3)
             output = ROOT / ".local/screenshots" / display
-            output.mkdir(parents=True, exist_ok=True)
-            run("xcrun", "simctl", "io", udid, "screenshot", "--type=jpeg", output / "01.jpg")
-            print(output / "01.jpg", flush=True)
+            shutil.rmtree(output, ignore_errors=True)
+            output.mkdir(parents=True)
+            try:
+                launch = subprocess.run(["xcrun", "simctl", "launch", "--console-pty", udid, bundle], text=True, capture_output=True,
+                                        timeout=300, env={**os.environ, "SIMCTL_CHILD_STARTER_CAPTURE": str(output)})
+                console = f"{launch.stdout}{launch.stderr}"
+            except subprocess.TimeoutExpired:
+                console = "The app was still running after five minutes."
+            if not (output / "01.png").exists():
+                raise SystemExit(f"The app did not capture {display}:\n{console}")
+            print(output / "01.png", flush=True)
         finally:
             subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
             deletion = subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True)
