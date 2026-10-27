@@ -1,0 +1,5 @@
+.local/
+Local.xcconfig
+xcuserdata/
+.build/
+.DS_Store
