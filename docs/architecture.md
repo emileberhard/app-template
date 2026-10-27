@@ -19,12 +19,23 @@
 - **Cloud signing.** Releases archive unsigned and export with an App Store
   Connect key, so CI holds no certificate or profile. `entitlements.json` says
   what each bundle claims, and the release checks the export against it.
+- **Sign nested frameworks before app bundles.** The unsigned archive can
+  contain linker ad-hoc signatures or unsigned frameworks. Ad-hoc sign every
+  embedded framework deepest first before sealing app bundles, including code
+  inside extensions. Xcode's cloud export then replaces these signatures;
+  reject the export unless every framework has an Apple Distribution authority.
+  An entitlement check alone missed an invalid Sentry signature during Pingo's
+  migration. Removing signatures instead leaves nested code unsigned before
+  app signing, so it is not the shared signing path.
 - **Hosted release runners.** Signing and uploads run on GitHub's macOS
   runners. A private repository compiles CI on its own Mac runner to save
   billed minutes, and fails rather than fall back to them.
 - **One Xcode pin.** `.xcode-version` names the Xcode for CI and the release;
   `select-xcode` fails on a runner without it, so CI never passes on a
   different compiler from the release's.
+- **Locked packages on clean runners.** Resolve the committed package versions
+  before archiving; `-skipPackageUpdates` needs packages already fetched even
+  with `-onlyUsePackageVersionsFromResolvedFile`.
 - **Admission before credentials.** `testflight` holds the App Store Connect
   key and runs the tag's build scripts, so it starts only after `admit` has
   checked the tag; within one job, a later step is no boundary against code an
@@ -35,10 +46,15 @@
 - **One exact upload.** The serialized TestFlight job selects max+1 across all
   uploaded builds and pending uploads, injects that number into the archive,
   and disables Xcode's export renumbering. Both App Store Connect jobs consume
-  the job output and filter that exact build. Selecting the latest build by
-  marketing version can falsely accept an earlier upload while a retry is
-  still processing. Retrying the upload job selects a fresh number; retrying
-  downstream jobs keeps the original output.
+  the job output and filter that exact build. Each version belongs to one
+  immutable tag, so retries reuse the build or processing upload already held
+  for that version and skip archiving, signing and uploading. GitHub's step
+  history fences any earlier attempt that started the upload: wait up to 15
+  minutes for Apple's list to show it, then fail rather than upload again.
+  The upload has its own named step so a failed entitlement check creates no
+  uncertainty. A stored fence artifact would expire and duplicate Apple's
+  build inventory; selecting a fresh number on every retry could send testers
+  a duplicate after a lost upload acknowledgement.
 - **Owned screenshot reservations.** Every reserved image ID is queued before
   transfer. Uploads and placement share one cleanup scope; workers finish
   before cleanup deletes any unplaced reservations. This also covers failures
