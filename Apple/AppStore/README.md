@@ -7,7 +7,7 @@ scenes or composition when needed. Native JPEG captures have no alpha channel. T
 App Store localization. Add localized captures when the app needs them.
 
 TestFlight distribution is app policy: `scripts/app-store-connect` attaches the
-build to all existing external groups, following Lykta. Configure the intended
+build to all existing external groups, by default. Configure the intended
 groups, beta description, feedback email and review contact before the first tag.
 The script updates What to Test from the annotated tag message and never submits
 the App Store version for App Review. An existing version in review leaves store
