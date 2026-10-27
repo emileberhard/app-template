@@ -35,6 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          started=$SECONDS
           while :; do
             state=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --commit "$GITHUB_SHA" --json status,conclusion \
               --jq 'if any(.[]; .conclusion == "success") then "passed" elif any(.[]; .status != "completed") then "running" elif length > 0 then "failed" else "missing" end') \
@@ -42,12 +43,12 @@ jobs:
             case $state in
               passed) exit 0 ;;
               failed) echo "::error::CI failed on $GITHUB_SHA."; exit 1 ;;
-              *) sleep 10 ;;
+              missing) (( SECONDS - started < 120 )) || { echo "::error::No CI run exists for $GITHUB_SHA; tag the commit a push to main ended on."; exit 1; } ;;
             esac
+            sleep 10
           done
 
   testflight:
-    needs: admit
     runs-on: xcode-27
     environment: testflight
     concurrency: testflight
@@ -56,12 +57,13 @@ jobs:
       actions: read
       contents: read
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
       VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - run: scripts/select-xcode
 
       - name: Configure
         env:
@@ -83,11 +85,26 @@ jobs:
         run: |
           xcodebuild archive -quiet -project Apple/Starter.xcodeproj -scheme Starter -configuration Release \
             -destination generic/platform=iOS -archivePath "$RUNNER_TEMP/Starter.xcarchive" \
+            -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates \
             MARKETING_VERSION="$VERSION" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
           app="$RUNNER_TEMP/Starter.xcarchive/Products/Applications/Starter.app"
           scripts/sign-bundles sign "$app"
 
-      # Apps with a server add their deployment/version gate here, before upload.
+      - name: Wait for release admission
+        timeout-minutes: 40
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while :; do
+            admit=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.name == "admit") | .conclusion // "pending"')
+            case $admit in
+              success) exit 0 ;;
+              pending | "") sleep 10 ;;
+              *) echo "::error::Release admission ended with $admit."; exit 1 ;;
+            esac
+          done
+
+      # Apps with a server wait here for the deployed server to run this version, as Lykta does.
 
       - name: Sign, check the entitlements and upload to TestFlight
         env:
@@ -106,10 +123,6 @@ jobs:
           unzip -q "$RUNNER_TEMP/check/Starter.ipa" -d "$RUNNER_TEMP/check"
           scripts/sign-bundles check "$RUNNER_TEMP/check/Payload/Starter.app"
           export_archive upload
-
-      - name: Remove signing inputs
-        if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
 
   testflight-review:
     needs: testflight
@@ -138,10 +151,6 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
           scripts/app-store-connect testflight "$VERSION" "$RUNNER_TEMP/notes.md"
 
-      - name: Remove signing inputs
-        if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
-
   app-store:
     needs: testflight
     runs-on: xcode-27
@@ -149,12 +158,13 @@ jobs:
     concurrency: app-store
     timeout-minutes: 60
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
       VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - run: scripts/select-xcode
 
       - name: Capture the screenshots
         env:
@@ -177,10 +187,6 @@ jobs:
           tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq .object.sha)
           gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
           scripts/app-store-connect app-store "$VERSION" .local/screenshots "$RUNNER_TEMP/notes.md"
-
-      - name: Remove signing inputs
-        if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
 
   github-release:
     needs: [admit, testflight]
