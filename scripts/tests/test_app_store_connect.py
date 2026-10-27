@@ -66,4 +66,3 @@ class UploadCleanupTests(unittest.TestCase):
                 with self.assertRaisesRegex(asc.RequestFailed, "transfer failed"):
                     asc.app_store("app", "1.3.2", "11", root, "notes")
                 cleanup.assert_called_once_with(["reserved"])
-
