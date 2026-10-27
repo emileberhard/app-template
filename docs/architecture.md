@@ -33,6 +33,9 @@
 - **One Xcode pin.** `.xcode-version` names the Xcode for CI and the release;
   `select-xcode` fails on a runner without it, so CI never passes on a
   different compiler from the release's.
+- **Locked packages on clean runners.** Resolve the committed package versions
+  before archiving; `-skipPackageUpdates` needs packages already fetched even
+  with `-onlyUsePackageVersionsFromResolvedFile`.
 - **Admission before credentials.** `testflight` holds the App Store Connect
   key and runs the tag's build scripts, so it starts only after `admit` has
   checked the tag; within one job, a later step is no boundary against code an

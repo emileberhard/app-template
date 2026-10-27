@@ -104,9 +104,15 @@ jobs:
           APP_STORE_CONNECT_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
           FENCED: ${{ steps.fence.outputs.fenced }}
         run: |
-          read -r number state < <(scripts/app-store-connect build-number "$VERSION" "$([[ $FENCED == true ]] && echo fenced || echo open)")
+          result=$(scripts/app-store-connect build-number "$VERSION" "$([[ $FENCED == true ]] && echo fenced || echo open)")
+          read -r number state <<< "$result"
           echo "number=$number" >> "$GITHUB_OUTPUT"
           echo "uploaded=$([[ $state == uploaded ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the locked packages
+        if: steps.build.outputs.uploaded != 'true'
+        timeout-minutes: 15
+        run: xcodebuild -resolvePackageDependencies -project Apple/Starter.xcodeproj -scheme Starter -onlyUsePackageVersionsFromResolvedFile
 
       - name: Archive
         if: steps.build.outputs.uploaded != 'true'
