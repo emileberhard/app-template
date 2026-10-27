@@ -21,5 +21,6 @@ ALWAYS_SEARCH_USER_PATHS = NO
 GENERATE_INFOPLIST_FILE = YES
 ENABLE_PREVIEWS = YES
 INFOPLIST_KEY_CFBundleDisplayName = Starter
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
 
 #include? "Local.xcconfig"

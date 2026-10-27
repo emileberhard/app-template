@@ -21,12 +21,13 @@ jobs:
   app:
     runs-on: ${{ fromJSON(vars.MAC_CI_RUNNER || '"xcode-27"') }}
     timeout-minutes: 30
-    env:
-      DEVELOPER_DIR: ${{ vars.DEVELOPER_DIR || '/Applications/Xcode_27.1.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Select the release's Xcode
+        if: runner.environment == 'github-hosted'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_27.1.app/Contents/Developer" >> "$GITHUB_ENV"
       - run: xcodebuild -quiet -project Apple/Starter.xcodeproj -scheme Starter -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath "${{ runner.temp }}/build-${{ github.run_id }}-${{ github.run_attempt }}" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO build
       - name: Remove build output
         if: always()
