@@ -49,12 +49,12 @@ jobs:
           done
 
   testflight:
+    needs: admit
     runs-on: xcode-27
     environment: testflight
     concurrency: testflight
     timeout-minutes: 60
     permissions:
-      actions: read
       contents: read
     env:
       VERSION: ${{ github.ref_name }}
@@ -89,20 +89,6 @@ jobs:
             MARKETING_VERSION="$VERSION" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
           app="$RUNNER_TEMP/Starter.xcarchive/Products/Applications/Starter.app"
           scripts/sign-bundles sign "$app"
-
-      - name: Wait for release admission
-        timeout-minutes: 40
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          while :; do
-            admit=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.name == "admit") | .conclusion // "pending"')
-            case $admit in
-              success) exit 0 ;;
-              pending | "") sleep 10 ;;
-              *) echo "::error::Release admission ended with $admit."; exit 1 ;;
-            esac
-          done
 
       # Apps with a server wait here for the deployed server to run this version, as Lykta does.
 

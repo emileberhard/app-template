@@ -25,11 +25,13 @@
 - **One Xcode pin.** `.xcode-version` names the Xcode for CI and the release;
   `select-xcode` fails on a runner without it, so CI never passes on a
   different compiler from the release's.
-- **Archive while admission runs.** `testflight` builds while `admit` waits for
-  CI and uploads only after it passes, which saves the CI wait on every
-  release. The job holds the App Store Connect key while it builds a tag's
-  commit before admission; owner-only tag creation and the environment's
-  version-tag limit bound that exposure.
+- **Admission before credentials.** `testflight` holds the App Store Connect
+  key and runs the tag's build scripts, so it starts only after `admit` has
+  checked the tag; within one job, a later step is no boundary against code an
+  earlier one ran. Tagging a commit whose CI has already passed makes admission
+  take seconds. An unprivileged archive job handing its archive to the
+  privileged one would overlap the CI wait at the cost of an artifact transfer;
+  measure that before adding it.
 - **Screenshots from the app.** `capture` launches a Debug build in the
   simulator with `STARTER_CAPTURE` set; the app snapshots its own window once it
   is on screen and exits, so captures never race the launch and never drift

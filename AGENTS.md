@@ -56,11 +56,11 @@ one short sentence per line; it becomes What to Test, What's New and the GitHub
 release notes.
 
 1. `admit` checks the tag and waits for CI on the same commit to pass.
-2. `testflight` archives unsigned with the tag as `MARKETING_VERSION` while
-   `admit` runs, and ad-hoc signs each bundle with its entitlements. Once
-   `admit` passes, it exports through Xcode cloud signing, which assigns the
-   build number, checks the exported entitlements and uploads. An app with a
-   server waits for its deployed version where `release.yml` marks the spot.
+2. `testflight` archives unsigned with the tag as `MARKETING_VERSION`, ad-hoc
+   signs each bundle with its entitlements, exports through Xcode cloud signing,
+   which assigns the build number, checks the exported entitlements and uploads.
+   An app with a server waits for its deployed version where `release.yml`
+   marks the spot.
 3. `testflight-review` sets What to Test; when the app has external groups, it
    adds the build to them and submits it for beta review.
 4. `app-store` captures the screenshots and prepares the App Store version with
