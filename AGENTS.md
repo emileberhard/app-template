@@ -69,7 +69,8 @@ release notes.
 5. `github-release` publishes the release.
 
 Submitting for App Review and releasing on the App Store stay manual. Rerun a
-transiently failed job from the tag's own run; a fix ships as the next patch.
+transiently failed job from the tag's own run, and only while that tag is still
+the newest version; a fix ships as the next patch.
 
 Before the first tag:
 
