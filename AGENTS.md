@@ -12,8 +12,9 @@ of this file true as the app grows.
 | `Apple/Starter.xcodeproj` | The Xcode project in the JSON `project.xcproj` format; edit it as JSON or in Xcode |
 | `Apple/App/` | The app target's code and assets, a synchronized folder: new files need no project edit |
 | `Apple/Config/` | `Starter.xcconfig` for build settings and identity, `entitlements.json`, `ExportOptions.plist` |
-| `Apple/AppStore/` | `capture`, which records the App Store screenshots |
-| `scripts/` | Release helpers: `sign-bundles` and `app-store-connect` |
+| `Apple/AppStore/` | `capture`, which records the App Store screenshots from the app itself |
+| `scripts/` | CI and release helpers: `select-xcode`, `sign-bundles` and `app-store-connect` |
+| `.xcode-version` | The Xcode that CI and the release build with |
 | `docs/architecture.md` | Goals, decisions and what is expensive to change |
 
 - Core holds what another client would reuse and imports nothing
@@ -41,9 +42,11 @@ of this file true as the app grows.
 ## CI and release
 
 CI tests Core on Linux and compiles the app on every push to `main` and every
-pull request. A private repository compiles on its own Mac runner, named by the
-`MAC_CI_RUNNER` variable as a JSON label array, because hosted macOS minutes
-are billed; releases always run on hosted runners.
+pull request, with the Xcode `.xcode-version` names. A private repository
+compiles on its own Mac runner, named by the `MAC_CI_RUNNER` variable as a JSON
+label array, and fails without it, because hosted macOS minutes are billed; a
+public one compiles hosted. Releases always run on hosted runners. Builds use
+only the package versions in the committed `Package.resolved`.
 
 Pushing an annotated `MAJOR.MINOR.PATCH` tag on `main`, higher than every other
 version tag, releases the app. The tag message lists the user-visible changes,
@@ -51,13 +54,13 @@ one short sentence per line; it becomes What to Test, What's New and the GitHub
 release notes.
 
 1. `admit` checks the tag and waits for CI on the same commit to pass.
-2. `testflight` archives unsigned with the tag as `MARKETING_VERSION`, ad-hoc
-   signs each bundle with its entitlements, exports through Xcode cloud signing,
-   which assigns the build number, checks the exported entitlements and uploads.
-   An app with a server waits for its deployed version where `release.yml`
-   marks the spot.
-3. `testflight-review` sets What to Test, adds the build to every external
-   group and submits it for beta review.
+2. `testflight` archives unsigned with the tag as `MARKETING_VERSION` while
+   `admit` runs, and ad-hoc signs each bundle with its entitlements. Once
+   `admit` passes, it exports through Xcode cloud signing, which assigns the
+   build number, checks the exported entitlements and uploads. An app with a
+   server waits for its deployed version where `release.yml` marks the spot.
+3. `testflight-review` sets What to Test; when the app has external groups, it
+   adds the build to them and submits it for beta review.
 4. `app-store` captures the screenshots and prepares the App Store version with
    manual release, short of App Review. A version still in review leaves it
    pending with a notice.
@@ -69,7 +72,8 @@ transiently failed job from the tag's own run; a fix ships as the next patch.
 Before the first tag:
 
 - Create the App Store Connect app record with its beta description, feedback
-  email, review contact and external TestFlight groups.
+  email and review contact, and external TestFlight groups only for real
+  external testers.
 - Give the `testflight` environment, limited to version tags, the variables
   `DEVELOPMENT_TEAM` and `APP_BUNDLE_ID` and the secrets
   `APP_STORE_CONNECT_KEY` (the P8 file's contents), `APP_STORE_CONNECT_KEY_ID`

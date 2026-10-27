@@ -21,9 +21,19 @@
   what each bundle claims, and the release checks the export against it.
 - **Hosted release runners.** Signing and uploads run on GitHub's macOS
   runners. A private repository compiles CI on its own Mac runner to save
-  billed minutes.
-- **Screenshots from the app.** `capture` records them from the simulator on
-  every release, so they never drift from the UI.
+  billed minutes, and fails rather than fall back to them.
+- **One Xcode pin.** `.xcode-version` names the Xcode for CI and the release;
+  `select-xcode` fails on a runner without it, so CI never passes on a
+  different compiler from the release's.
+- **Archive while admission runs.** `testflight` builds while `admit` waits for
+  CI and uploads only after it passes, which saves the CI wait on every
+  release. The job holds the App Store Connect key while it builds a tag's
+  commit before admission; owner-only tag creation and the environment's
+  version-tag limit bound that exposure.
+- **Screenshots from the app.** `capture` launches a Debug build in the
+  simulator with `STARTER_CAPTURE` set; the app snapshots its own window once it
+  is on screen and exits, so captures never race the launch and never drift
+  from the UI.
 
 Record each later decision here with the alternatives it beat.
 
