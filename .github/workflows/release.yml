@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    tags: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  admit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check that this is the newest version on main
+        run: |
+          [[ $VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::$VERSION is not MAJOR.MINOR.PATCH."; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$VERSION is not on main."; exit 1; }
+          [[ $(git cat-file -t "refs/tags/$VERSION") == tag ]] || { echo "::error::Release tags must be annotated."; exit 1; }
+          newest=$(git tag --list | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -1)
+          [[ $newest == "$VERSION" ]] || { echo "::error::$newest is newer than $VERSION."; exit 1; }
+
+      - name: Wait for CI to pass on this commit
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while :; do
+            state=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --commit "$GITHUB_SHA" --json status,conclusion \
+              --jq 'if any(.[]; .conclusion == "success") then "passed" elif any(.[]; .status != "completed") then "running" elif length > 0 then "failed" else "missing" end') \
+              || state=unknown
+            case $state in
+              passed) exit 0 ;;
+              failed) echo "::error::CI failed on $GITHUB_SHA."; exit 1 ;;
+              *) sleep 10 ;;
+            esac
+          done
+
+  testflight:
+    needs: admit
+    runs-on: xcode-27
+    environment: testflight
+    concurrency: testflight
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        env:
+          DEVELOPMENT_TEAM: ${{ vars.DEVELOPMENT_TEAM }}
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          : "${DEVELOPMENT_TEAM:?Set the DEVELOPMENT_TEAM environment variable.}"
+          : "${APP_BUNDLE_ID:?Set the APP_BUNDLE_ID environment variable.}"
+          printf 'DEVELOPMENT_TEAM = %s\nAPP_BUNDLE_ID = %s\n' \
+            "$DEVELOPMENT_TEAM" "$APP_BUNDLE_ID" > Apple/Config/Local.xcconfig
+          plutil -insert teamID -string "$DEVELOPMENT_TEAM" Apple/Config/ExportOptions.plist
+          umask 077
+          printf '%s' "$APP_STORE_CONNECT_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Archive
+        env:
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+        run: |
+          xcodebuild archive -quiet -project Apple/Starter.xcodeproj -scheme Starter -configuration Release \
+            -destination generic/platform=iOS -archivePath "$RUNNER_TEMP/Starter.xcarchive" \
+            MARKETING_VERSION="$VERSION" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
+          app="$RUNNER_TEMP/Starter.xcarchive/Products/Applications/Starter.app"
+          scripts/sign-bundles sign "$app"
+
+      # Apps with a server add their deployment/version gate here, before upload.
+
+      - name: Sign, check the entitlements and upload to TestFlight
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+        run: |
+          export_archive() {
+            xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Starter.xcarchive" -exportPath "$RUNNER_TEMP/$1" \
+              -exportOptionsPlist "$RUNNER_TEMP/$1.plist" -allowProvisioningUpdates \
+              -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID"
+          }
+          plutil -replace destination -string export -o "$RUNNER_TEMP/check.plist" Apple/Config/ExportOptions.plist
+          cp Apple/Config/ExportOptions.plist "$RUNNER_TEMP/upload.plist"
+          export_archive check
+          unzip -q "$RUNNER_TEMP/check/Starter.ipa" -d "$RUNNER_TEMP/check"
+          scripts/sign-bundles check "$RUNNER_TEMP/check/Payload/Starter.app"
+          export_archive upload
+
+      - name: Remove signing inputs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
+
+  testflight-review:
+    needs: testflight
+    runs-on: ubuntu-24.04
+    environment: testflight
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Submit the build for TestFlight review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        run: |
+          umask 077
+          printf '%s' "$APP_STORE_CONNECT_KEY" > "$APP_STORE_CONNECT_KEY_PATH"
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq .object.sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
+          scripts/app-store-connect testflight "$VERSION" "$RUNNER_TEMP/notes.md"
+
+      - name: Remove signing inputs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
+
+  app-store:
+    needs: testflight
+    runs-on: xcode-27
+    environment: testflight
+    concurrency: app-store
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Capture the screenshots
+        env:
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+        run: |
+          printf 'APP_BUNDLE_ID = %s\n' "$APP_BUNDLE_ID" > Apple/Config/Local.xcconfig
+          Apple/AppStore/capture
+
+      - name: Prepare the App Store version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        run: |
+          umask 077
+          printf '%s' "$APP_STORE_CONNECT_KEY" > "$APP_STORE_CONNECT_KEY_PATH"
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq .object.sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
+          scripts/app-store-connect app-store "$VERSION" .local/screenshots "$RUNNER_TEMP/notes.md"
+
+      - name: Remove signing inputs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Apple/Config/Local.xcconfig
+
+  github-release:
+    needs: [admit, testflight]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Publish the tag message as the release notes
+        run: |
+          tag=$(gh api "repos/$GH_REPO/git/ref/tags/$VERSION" --jq .object.sha)
+          gh api "repos/$GH_REPO/git/tags/$tag" --jq .message | gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file -
