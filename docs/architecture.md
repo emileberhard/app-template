@@ -60,6 +60,10 @@
   uncertainty. A stored fence artifact would expire and duplicate Apple's
   build inventory; selecting a fresh number on every retry could send testers
   a duplicate after a lost upload acknowledgement.
+- **Upload the checked export.** One cloud-signed export is checked and
+  uploaded with `altool`. Exporting again with `destination` `upload` signed
+  a second time, about 2.5 minutes on hosted runners in RemoteCoder's iOS
+  release, and shipped bytes nobody checked.
 - **Owned screenshot reservations.** Every reserved image ID is queued before
   transfer. Uploads and placement share one cleanup scope; workers finish
   before cleanup deletes any unplaced reservations. This also covers failures

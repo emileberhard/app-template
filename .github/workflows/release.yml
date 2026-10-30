@@ -159,18 +159,17 @@ jobs:
 
       # Apps with a server wait here for the deployed server to run this version, as Lykta does.
 
-      - name: Check the entitlements
+      - name: Export and check the entitlements
         if: steps.build.outputs.uploaded != 'true'
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
         run: |
-          plutil -replace destination -string export -o "$RUNNER_TEMP/check.plist" Apple/Config/ExportOptions.plist
-          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Starter.xcarchive" -exportPath "$RUNNER_TEMP/check" \
-            -exportOptionsPlist "$RUNNER_TEMP/check.plist" -allowProvisioningUpdates \
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Starter.xcarchive" -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist Apple/Config/ExportOptions.plist -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID"
-          unzip -q "$RUNNER_TEMP/check/Starter.ipa" -d "$RUNNER_TEMP/check"
+          unzip -q "$RUNNER_TEMP/export/Starter.ipa" -d "$RUNNER_TEMP/check"
           scripts/sign-bundles check "$RUNNER_TEMP/check/Payload/Starter.app"
 
       - name: Upload to TestFlight
@@ -179,9 +178,8 @@ jobs:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Starter.xcarchive" -exportPath "$RUNNER_TEMP/upload" \
-            -exportOptionsPlist Apple/Config/ExportOptions.plist -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID"
+          xcrun altool --upload-app --type ios --file "$RUNNER_TEMP/export/Starter.ipa" \
+            --api-key "$KEY_ID" --api-issuer "$ISSUER_ID" --p8-file-path "$RUNNER_TEMP/AuthKey.p8"
 
   testflight-review:
     needs: testflight

@@ -64,8 +64,9 @@ release notes.
    reservation and with its full build number, and fails if none appears. It archives unsigned with
    the tag as `MARKETING_VERSION` and that `CURRENT_PROJECT_VERSION`, ad-hoc signs each
    embedded framework deepest first, then each app bundle with its entitlements,
-   exports through Xcode cloud signing without renumbering, checks the exported
-   entitlements and every framework's distribution signature and uploads. An
+   exports once through Xcode cloud signing without renumbering, checks the
+   exported entitlements and every framework's distribution signature, and
+   uploads exactly that export with `altool`. An
    existing build skips archiving, signing and uploading. Its build-number
    output makes both following App Store Connect jobs select that exact upload,
    including on retries.
