@@ -75,14 +75,14 @@ release notes.
 3. `testflight-review` sets What to Test; when the app has external groups, it
    adds the build to them and submits it for beta review.
 4. `app-store` captures the screenshots and prepares the App Store version with
-   manual release, short of App Review. It waits for every screenshot placement
+   release after approval, short of App Review. It waits for every screenshot placement
    to become active or reach a documented parent review state; unknown states
    keep waiting, and a timeout reports the last placement states.
    A version still in review leaves it pending with a notice.
 5. `github-release` publishes the release and marks it Latest only when its
    version is still the newest plain version tag, including on a later retry.
 
-Submitting for App Review and releasing on the App Store stay manual. Rerun a
+Submitting for App Review stays manual; Apple's approval releases the version. Rerun a
 transiently failed job from the tag's own run, and only while that tag is still
 the newest version; a fix ships as the next patch.
 
