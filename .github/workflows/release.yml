@@ -230,7 +230,7 @@ jobs:
           APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
         run: |
           printf 'APP_BUNDLE_ID = %s\n' "$APP_BUNDLE_ID" > Apple/Config/Local.xcconfig
-          Apple/AppStore/capture
+          Apple/AppStore/capture app-store
 
       - name: Prepare the App Store version
         env:

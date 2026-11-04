@@ -13,7 +13,7 @@ this file true as the app grows.
 | `Apple/Starter.xcodeproj` | The Xcode project in the JSON `project.xcproj` format; edit it as JSON or in Xcode |
 | `Apple/App/` | The app target's code and assets, a synchronized folder: new files need no project edit |
 | `Apple/Config/` | `Starter.xcconfig` for build settings and identity, `entitlements.json`, `ExportOptions.plist` |
-| `Apple/AppStore/` | `capture`, which records the App Store screenshots from the app itself |
+| `Apple/AppStore/` | `capture`, which records the App Store screenshots and the UI previews from the app itself |
 | `scripts/` | CI and release helpers: `select-xcode`, `sign-bundles` and `app-store-connect` |
 | `.xcode-version` | The Xcode that CI and the release build with |
 | `docs/architecture.md` | Goals, decisions and what is expensive to change |
@@ -39,6 +39,34 @@ this file true as the app grows.
 | `just test` | Test Core |
 | `just build` | Compile the app for iOS without signing |
 | `just screenshots` | Capture the App Store screenshots into `.local/screenshots/` |
+| `just ui-previews [screen…]` | Render the app's screens, all by default, into `.local/ui-previews/` |
+| `just ui-previews-stop` | Shut down the warm simulator when the UI work ends |
+
+## UI previews
+
+`just ui-previews` is how an agent sees its own UI change, and it needs no
+setup: the first run builds and boots what it needs, and later rounds take
+seconds. It builds incrementally into `.local/simulator-build`, installs into
+the one warm simulator that every app on this Mac shares, lets the app render
+each screen from its own window, and prints JSON naming `sheet.jpg`, each
+screen's PNG and 900-pixel JPEG, and the seconds spent building and capturing.
+Read the sheet after every change and open a PNG only for detail;
+`just ui-previews days-left-dark` renders only the named screens.
+
+- `CaptureScreen` in `Apple/App/Capture.swift` is the one catalog of screens.
+  Give every main screen and state its case as it lands, such as empty,
+  loaded, error and dark, so a regression shows in the sheet.
+  `APP_STORE_SCREENS` in `capture` picks the App Store screenshots from it.
+- A case renders the real view from fixture values, through the app's own
+  root and navigation where the screen lives there: no network, clock,
+  permission prompt or stored data. A screen that loads asynchronously reports
+  ready only once its fixture is on screen; never wait with a sleep.
+- Capture code compiles only in Debug, so CI checks it and Release never
+  contains it.
+- A frame shows layout and rendering, not interaction, animation, an extension's
+  real host or performance; check those on a device.
+- Keep a warm round within seconds. When it slows, the JSON's timings show
+  whether building or capturing grew; fix that before adding screens.
 
 ## CI and release
 

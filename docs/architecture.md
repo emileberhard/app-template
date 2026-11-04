@@ -74,10 +74,28 @@
   within the existing 40-minute bound, with the last states in a timeout.
   Treating every state except `ASSET_PROCESSING` as ready let a `PENDING`
   iPhone placement pass while its image was still processing.
-- **Screenshots from the app.** `capture` launches a Debug build in the
-  simulator with `STARTER_CAPTURE` set; the app snapshots its own window once it
-  is on screen and exits, so captures never race the launch and never drift
-  from the UI.
+- **Screens from the app, for the store and for agents.** `capture` launches
+  a Debug build in the simulator with `STARTER_CAPTURE` set. The app shows each
+  requested `CaptureScreen`, waits for its `onAppear`, snapshots the key window
+  with `drawHierarchy` and exits, so captures never race the launch and never
+  drift from the UI. `ImageRenderer` draws placeholders for controls and
+  containers that Core Animation composites, such as lists and navigation bars.
+  Xcode's `RenderPreview` renders one preview at a time per Mac, and UI tests
+  relaunch and drive the app per screen. One launch that renders every screen
+  and encodes them concurrently is what lets `just ui-previews` answer in
+  seconds, so agents check their own UI changes on every round.
+- **One warm simulator per Mac.** `ui-previews` keeps one booted simulator
+  for every app on the Mac, identified by the UDID recorded in
+  `~/Library/Caches/ui-previews/` rather than by name, and holds its lock only
+  while installing and capturing. Builds and output stay in each checkout's
+  `.local/`, so parallel worktrees build concurrently and never capture each
+  other's app. A simulator per checkout would multiply booted simulators, each
+  costing gigabytes of memory. The App Store screenshots still use fresh
+  simulators deleted afterwards, so release images carry no development state.
+- **Freshness from the incremental build.** Every round runs `xcodebuild`
+  instead of skipping it on a hash of chosen source files; in Mumla such a
+  stamp missed the package lock, assets and the Xcode version and returned
+  stale screens.
 
 Record each later decision here with the alternatives it beat.
 
