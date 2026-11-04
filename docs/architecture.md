@@ -78,24 +78,29 @@
   a Debug build in the simulator with `STARTER_CAPTURE` set. The app shows each
   requested `CaptureScreen`, waits for its `onAppear`, snapshots the key window
   with `drawHierarchy` and exits, so captures never race the launch and never
-  drift from the UI. `ImageRenderer` draws placeholders for controls and
-  containers that Core Animation composites, such as lists and navigation bars.
-  Xcode's `RenderPreview` renders one preview at a time per Mac, and UI tests
-  relaunch and drive the app per screen. One launch that renders every screen
+  drift from the UI. With the iOS 27 SDK, `ImageRenderer` draws placeholders
+  for controls and containers that Core Animation composites, such as lists
+  and navigation bars. Xcode's `RenderPreview` renders one preview at a time
+  per Mac, and UI tests add a test runner that reaches each screen by
+  navigating through accessibility. One launch that shows every screen itself
   and encodes them concurrently is what lets `just ui-previews` answer in
   seconds, so agents check their own UI changes on every round.
-- **One warm simulator per Mac.** `ui-previews` keeps one booted simulator
-  for every app on the Mac, identified by the UDID recorded in
-  `~/Library/Caches/ui-previews/` rather than by name, and holds its lock only
-  while installing and capturing. Builds and output stay in each checkout's
-  `.local/`, so parallel worktrees build concurrently and never capture each
-  other's app. A simulator per checkout would multiply booted simulators, each
-  costing gigabytes of memory. The App Store screenshots still use fresh
-  simulators deleted afterwards, so release images carry no development state.
+- **One warm simulator per Mac and device type.** `ui-previews` keeps one
+  booted simulator for every app on the Mac that previews on the same device,
+  identified by the UDID recorded in `~/Library/Caches/ui-previews/` rather
+  than by name, and holds its lock only while installing and capturing. It
+  replaces that simulator when a newer runtime for the device is installed.
+  Builds and output stay in each checkout's `.local/`, so parallel worktrees
+  build concurrently and never capture each other's app. A simulator per
+  checkout would multiply booted simulators, each costing gigabytes of memory;
+  one simulator for all device types would be recreated and cold-booted
+  whenever apps on different devices alternate. The App Store screenshots
+  still use fresh simulators deleted afterwards, so release images carry no
+  development state.
 - **Freshness from the incremental build.** Every round runs `xcodebuild`
-  instead of skipping it on a hash of chosen source files; in Mumla such a
-  stamp missed the package lock, assets and the Xcode version and returned
-  stale screens.
+  instead of skipping it on a hash of chosen source files. Such a stamp misses
+  inputs it does not list, such as the package lock, assets and the Xcode
+  version, and returns stale screens.
 
 Record each later decision here with the alternatives it beat.
 

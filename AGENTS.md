@@ -47,7 +47,7 @@ this file true as the app grows.
 `just ui-previews` is how an agent sees its own UI change, and it needs no
 setup: the first run builds and boots what it needs, and later rounds take
 seconds. It builds incrementally into `.local/simulator-build`, installs into
-the one warm simulator that every app on this Mac shares, lets the app render
+the warm simulator that apps on this Mac share per device, lets the app render
 each screen from its own window, and prints JSON naming `sheet.jpg`, each
 screen's PNG and 900-pixel JPEG, and the seconds spent building and capturing.
 Read the sheet after every change and open a PNG only for detail;

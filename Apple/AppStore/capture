@@ -59,11 +59,14 @@ def capture(udid, bundle, output, screens, timeout):
     launch = ["xcrun", "simctl", "launch", "--terminate-running-process", "--console-pty", udid, bundle, *LOCALE]
     try:
         result = subprocess.run(launch, text=True, capture_output=True, timeout=timeout, env=env)
-        console = f"{result.stdout}{result.stderr}"
-    except subprocess.TimeoutExpired as expired:
+    except BaseException as failure:
         subprocess.run(["xcrun", "simctl", "terminate", udid, bundle], capture_output=True)
-        partial = b"".join(part or b"" for part in (expired.stdout, expired.stderr)).decode(errors="replace")
+        if not isinstance(failure, subprocess.TimeoutExpired):
+            raise
+        partial = b"".join(part or b"" for part in (failure.stdout, failure.stderr)).decode(errors="replace")
         console = f"{partial}The app was still running after {timeout} seconds."
+    else:
+        console = f"{result.stdout}{result.stderr}"
     manifest = output / "manifest.json"
     if not manifest.exists():
         raise SystemExit(f"The app did not finish the capture:\n{console}")
@@ -80,18 +83,24 @@ def locked_simulator_record():
 
 def recorded_simulator(record):
     devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
-    states = {device["udid"]: device["state"] for runtime in devices.values() for device in runtime}
+    found = {device["udid"]: (runtime, device["state"]) for runtime, listed in devices.items() for device in listed}
     udid = record.read_text().strip() if record.exists() else None
-    return udid, states.get(udid)
+    runtime, state = found.get(udid, (None, None))
+    return udid, runtime, state
 
 
 @contextmanager
 def warm_simulator():
     with locked_simulator_record() as record:
-        udid, state = recorded_simulator(record)
+        udid, runtime, state = recorded_simulator(record)
+        latest = latest_runtime([PREVIEW_DEVICE])
+        if state is not None and runtime != latest:
+            if state == "Booted":
+                run("xcrun", "simctl", "shutdown", udid)
+            run("xcrun", "simctl", "delete", udid)
+            state = None
         if state is None:
-            udid = run("xcrun", "simctl", "create", f"UI Previews ({PREVIEW_DEVICE})", PREVIEW_DEVICE,
-                       latest_runtime([PREVIEW_DEVICE]))
+            udid = run("xcrun", "simctl", "create", f"UI Previews ({PREVIEW_DEVICE})", PREVIEW_DEVICE, latest)
             record.write_text(udid)
         if state != "Booted":
             run("xcrun", "simctl", "bootstatus", udid, "-b")
@@ -115,7 +124,7 @@ def previews(screens):
 
 def stop():
     with locked_simulator_record() as record:
-        udid, state = recorded_simulator(record)
+        udid, _, state = recorded_simulator(record)
         if state == "Booted":
             run("xcrun", "simctl", "shutdown", udid)
     print(json.dumps({"stopped": udid if state == "Booted" else None}))
