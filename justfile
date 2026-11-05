@@ -11,7 +11,7 @@ screenshots:
     Apple/AppStore/capture app-store
 
 [positional-arguments]
-ui-previews *screens:
+ui-previews *args:
     Apple/AppStore/capture previews "$@"
 
 ui-previews-stop:

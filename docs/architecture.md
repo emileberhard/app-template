@@ -74,17 +74,18 @@
   within the existing 40-minute bound, with the last states in a timeout.
   Treating every state except `ASSET_PROCESSING` as ready let a `PENDING`
   iPhone placement pass while its image was still processing.
-- **Screens from the app, for the store and for agents.** `capture` launches
-  a Debug build in the simulator with `STARTER_CAPTURE` set. The app shows each
-  requested `CaptureScreen`, waits for its `onAppear`, snapshots the key window
-  with `drawHierarchy` and exits, so captures never race the launch and never
-  drift from the UI. With the iOS 27 SDK, `ImageRenderer` draws placeholders
-  for controls and containers that Core Animation composites, such as lists
-  and navigation bars. Xcode's `RenderPreview` renders one preview at a time
-  per Mac, and UI tests add a test runner that reaches each screen by
-  navigating through accessibility. One launch that shows every screen itself
-  and encodes them concurrently is what lets `just ui-previews` answer in
-  seconds, so agents check their own UI changes on every round.
+- **Real Simulator screenshots, driven by the app.** The Debug capture root
+  reaches each catalog case through the app's real root and navigation using
+  deterministic fixtures. It waits for consecutive matching drawn frames and
+  signals the driver, which captures the Simulator with its system chrome and
+  presented sheets. The app loads the PNG and encodes the thumbnail concurrently
+  while clearing the root before the next case. The driver pins the status bar,
+  applies and restores appearance, bounds the handshake and terminates failed
+  launches. In-app window snapshots omit system UI; UI tests add a runner and
+  navigation overhead. This handshake keeps one catalog and one launch while
+  preserving fidelity. Animated and clock-driven fixtures must be frozen;
+  otherwise frame stability cannot prove readiness. A screen whose asynchronous
+  data or sheet has not appeared yet must signal its own readiness first.
 - **One warm simulator per Mac and device type.** `ui-previews` keeps one
   booted simulator for every app on the Mac that previews on the same device,
   identified by the UDID recorded in `~/Library/Caches/ui-previews/` rather
@@ -100,7 +101,8 @@
 - **Freshness from the incremental build.** Every round runs `xcodebuild`
   instead of skipping it on a hash of chosen source files. Such a stamp misses
   inputs it does not list, such as the package lock, assets and the Xcode
-  version, and returns stale screens.
+  version, and returns stale screens. Resolve locked packages again when
+  `Package.resolved` changes; a clean build also resolves them before building.
 
 Record each later decision here with the alternatives it beat.
 

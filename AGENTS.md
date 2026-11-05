@@ -39,39 +39,40 @@ this file true as the app grows.
 | `just test` | Test Core |
 | `just build` | Compile the app for iOS without signing |
 | `just screenshots` | Capture the App Store screenshots into `.local/screenshots/` |
-| `just ui-previews [screen…]` | Render the app's screens, all by default, into `.local/ui-previews/` |
+| `just ui-previews [--appearance light|dark] [screen…]` | Render the app's screens, all by default, into `.local/ui-previews/` |
 | `just ui-previews-stop` | Shut down the warm simulator when the UI work ends |
 
 ## UI previews
 
-`just ui-previews` is how an agent sees its own UI change, and it needs no
-setup: the first run builds and boots what it needs, and later rounds take
-seconds. It builds incrementally into `.local/simulator-build`, installs into
-the warm simulator that apps on this Mac share per device, lets the app render
-each screen from its own window, and prints JSON naming `sheet.jpg`, each
-screen's PNG and 900-pixel JPEG, and the seconds spent building and capturing.
-Read the sheet after every change and open a PNG only for detail;
-`just ui-previews days-left-dark` renders only the named screens.
+`just ui-previews` builds incrementally into `.local/simulator-build`, installs
+into the shared warm simulator under its lock and takes real Simulator
+screenshots. It prints JSON naming `sheet.jpg`, each screen's PNG and 900-pixel
+JPEG, and the seconds spent building and capturing. Read every screen of the
+sheet after each change; open a PNG only for detail. Pass screen IDs to select
+a subset, or `--appearance light` to change the default dark appearance. App
+Store captures use light. The driver pins the status bar and restores the
+simulator appearance after capture.
 
 - `CaptureScreen` in `Apple/App/Capture.swift` is the one catalog of screens.
-  Give every main screen and state its case as it lands, such as empty,
-  loaded, error and dark, so a regression shows in the sheet.
-  `APP_STORE_SCREENS` in `capture` picks the App Store screenshots from it.
-- A case renders the real view from fixture values, through the app's own
-  root and navigation where the screen lives there: no network, clock,
-  permission prompt or stored data. A screen that loads asynchronously reports
-  ready only once its fixture is on screen; never wait with a sleep.
-- Capture code compiles only in Debug, so CI checks it and Release never
-  contains it.
-- A frame shows layout and rendering, not interaction, animation, an extension's
-  real host or performance; check those on a device.
-- Keep a warm round within seconds. When it slows, the JSON's timings show
-  whether building or capturing grew; fix that before adding screens.
+  Give every main screen and state its case as it lands, such as empty, loaded
+  and error. `APP_STORE_SCREENS` in `capture` picks the App Store screenshots.
+- A case reaches the real screen through the app's root and navigation with
+  deterministic fixtures: no network, clock, permission prompt or stored data.
+  Freeze animated and clock-driven views. A screen that loads asynchronously
+  signals readiness once its fixture is on screen. Present sheets as sheets.
+- The app waits for matching drawn frames, signals the driver, loads its actual
+  Simulator screenshot, then clears the root before the next case. Capture code
+  compiles only in Debug. The driver owns and recreates its `.local/` output.
+- A frame shows layout and rendering, including system chrome and sheets, but
+  not interaction, animation, an extension's real host or performance; check
+  those on a device.
+- Keep a warm round within seconds. The JSON's timings show whether building
+  or capturing grew. Run `just ui-previews-stop` when UI work ends.
 
 ## CI and release
 
-CI tests Core on Linux and compiles the app on every push to `main` and every
-pull request, with the Xcode `.xcode-version` names. A private repository
+CI tests Core on Linux, compiles the app and captures App Store screens on every
+push to `main` and every pull request, with the Xcode `.xcode-version` names. A private repository
 compiles on its own Mac runner, named by the `MAC_CI_RUNNER` variable as a JSON
 label array, and fails without it, because hosted macOS minutes are billed; a
 public one compiles hosted. The release signs and uploads on hosted runners; a
