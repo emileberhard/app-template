@@ -9,6 +9,7 @@ import signal
 import subprocess
 import time
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +17,8 @@ BUILD = ROOT / ".local" / "simulator-build"
 APP = BUILD / "Build/Products/Debug-iphonesimulator/Starter.app"
 PREVIEWS = ROOT / ".local" / "ui-previews"
 APP_STORE_SCREENS = ["days-left"]
+RESOLVED = ROOT / "Apple/Starter.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+RESOLVED_COPY = BUILD / "Package.resolved"
 APP_STORE_DISPLAYS = {
     "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE": "iPhone 18 Pro",
     "IPAD_13_PROFILE": "iPad Pro 13-inch (M5)",
@@ -23,10 +26,12 @@ APP_STORE_DISPLAYS = {
 PREVIEW_DEVICE = "iPhone 18 Pro"
 SHARED_SIMULATORS = Path.home() / "Library" / "Caches" / "ui-previews"
 LOCALE = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+STATUS_BAR = ["--time", datetime(2007, 1, 9, 9, 41).astimezone().isoformat(timespec="milliseconds"), "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",
+              "--cellularMode", "active", "--cellularBars", "4", "--batteryState", "charged", "--batteryLevel", "100"]
 
 
-def run(*args):
-    return subprocess.run([str(arg) for arg in args], check=True, text=True, capture_output=True).stdout.strip()
+def run(*args, timeout=None):
+    return subprocess.run([str(arg) for arg in args], check=True, text=True, capture_output=True, timeout=timeout).stdout.strip()
 
 
 def cancel(signum, frame):
@@ -43,6 +48,12 @@ def latest_runtime(devices):
 
 
 def build():
+    if RESOLVED.exists() and (not (BUILD / "SourcePackages").exists() or not RESOLVED_COPY.exists() or RESOLVED.read_bytes() != RESOLVED_COPY.read_bytes()):
+        run("xcodebuild", "-resolvePackageDependencies", "-project", ROOT / "Apple/Starter.xcodeproj", "-scheme", "Starter",
+            "-derivedDataPath", BUILD, "-onlyUsePackageVersionsFromResolvedFile")
+        shutil.copyfile(RESOLVED, RESOLVED_COPY)
+    if not RESOLVED.exists():
+        RESOLVED_COPY.unlink(missing_ok=True)
     run("xcodebuild", "-quiet", "-project", ROOT / "Apple/Starter.xcodeproj", "-scheme", "Starter",
         "-configuration", "Debug", "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", BUILD,
         "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile", "-skipPackageUpdates",
@@ -50,27 +61,74 @@ def build():
     return run("plutil", "-extract", "CFBundleIdentifier", "raw", APP / "Info.plist")
 
 
-def capture(udid, bundle, output, screens, timeout):
+def capture(udid, bundle, output, screens, appearance, timeout):
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir(parents=True)
-    env = {**os.environ, "SIMCTL_CHILD_STARTER_CAPTURE": str(output)}
+    env = {**os.environ, "SIMCTL_CHILD_STARTER_CAPTURE": str(output),
+           "SIMCTL_CHILD_STARTER_CAPTURE_APPEARANCE": appearance}
     if screens:
         env["SIMCTL_CHILD_STARTER_CAPTURE_SCREENS"] = ",".join(screens)
     launch = ["xcrun", "simctl", "launch", "--terminate-running-process", "--console-pty", udid, bundle, *LOCALE]
+    ready = output / "ready"
+    console = output / "console.log"
+    deadline = time.monotonic() + timeout
+    expired = False
+    app = None
     try:
-        result = subprocess.run(launch, text=True, capture_output=True, timeout=timeout, env=env)
-    except BaseException as failure:
-        subprocess.run(["xcrun", "simctl", "terminate", udid, bundle], capture_output=True)
-        if not isinstance(failure, subprocess.TimeoutExpired):
-            raise
-        partial = b"".join(part or b"" for part in (failure.stdout, failure.stderr)).decode(errors="replace")
-        console = f"{partial}The app was still running after {timeout} seconds."
-    else:
-        console = f"{result.stdout}{result.stderr}"
+        run("xcrun", "simctl", "status_bar", udid, "override", *STATUS_BAR, timeout=max(0.001, deadline - time.monotonic()))
+        with open(console, "w") as log:
+            app = subprocess.Popen(launch, stdout=log, stderr=subprocess.STDOUT, env=env)
+            while app.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(launch, timeout)
+                if ready.exists():
+                    screen = ready.read_text().strip()
+                    ready.unlink()
+                    if not screen or Path(screen).name != screen:
+                        raise RuntimeError(f"Invalid screen ID from app: {screen!r}")
+                    shot = output / f".{screen}.png"
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(launch, timeout)
+                    run("xcrun", "simctl", "io", udid, "screenshot", "--mask=black", shot, timeout=remaining)
+                    shot.rename(output / f"{screen}.png")
+                else:
+                    time.sleep(min(0.02, remaining))
+    except subprocess.TimeoutExpired:
+        expired = True
+    finally:
+        try:
+            if expired or app is None or app.poll() != 0 or not (output / "manifest.json").exists():
+                try:
+                    subprocess.run(["xcrun", "simctl", "terminate", udid, bundle], capture_output=True, timeout=5)
+                finally:
+                    if app is not None and app.poll() is None:
+                        app.terminate()
+                        try:
+                            app.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            app.kill()
+                            app.wait(timeout=5)
+        finally:
+            subprocess.run(["xcrun", "simctl", "status_bar", udid, "clear"], capture_output=True, timeout=5)
     manifest = output / "manifest.json"
-    if not manifest.exists():
-        raise SystemExit(f"The app did not finish the capture:\n{console}")
+    if expired or app is None or app.returncode != 0 or not manifest.exists():
+        reason = f"exceeded the {timeout}-second deadline" if expired else "exited before finishing"
+        raise SystemExit(f"The app {reason}:\n{console.read_text() if console.exists() else ''}")
     return json.loads(manifest.read_text())
+
+
+@contextmanager
+def simulator_appearance(udid, appearance):
+    previous = run("xcrun", "simctl", "ui", udid, "appearance")
+    if previous not in ("light", "dark"):
+        raise RuntimeError(f"Could not read simulator appearance: {previous}")
+    run("xcrun", "simctl", "ui", udid, "appearance", appearance)
+    try:
+        yield
+    finally:
+        run("xcrun", "simctl", "ui", udid, "appearance", previous)
 
 
 @contextmanager
@@ -107,13 +165,14 @@ def warm_simulator():
         yield udid
 
 
-def previews(screens):
+def previews(screens, appearance):
     started = time.monotonic()
     bundle = build()
     built = time.monotonic()
     with warm_simulator() as udid:
         run("xcrun", "simctl", "install", udid, APP)
-        ids = capture(udid, bundle, PREVIEWS, screens, timeout=60)
+        with simulator_appearance(udid, appearance):
+            ids = capture(udid, bundle, PREVIEWS, screens, appearance=appearance, timeout=90)
     print(json.dumps({
         "sheet": str(PREVIEWS / "sheet.jpg"),
         "screens": [{"id": id, "png": str(PREVIEWS / f"{id}.png"), "jpg": str(PREVIEWS / "jpg" / f"{id}.jpg")}
@@ -139,7 +198,8 @@ def app_store():
             run("xcrun", "simctl", "bootstatus", udid, "-b")
             run("xcrun", "simctl", "install", udid, APP)
             raw = ROOT / ".local/screenshot-captures" / display
-            capture(udid, bundle, raw, APP_STORE_SCREENS, timeout=300)
+            with simulator_appearance(udid, "light"):
+                capture(udid, bundle, raw, APP_STORE_SCREENS, appearance="light", timeout=300)
             slides = ROOT / ".local/screenshots" / display
             shutil.rmtree(slides, ignore_errors=True)
             slides.mkdir(parents=True)
@@ -157,16 +217,17 @@ def app_store():
 def main():
     parser = argparse.ArgumentParser(description="Capture the app's screens from the app itself in the iOS Simulator.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("app-store", help="capture the App Store screenshots into .local/screenshots on fresh simulators")
+    commands.add_parser("app-store", help="capture the App Store slides into .local/screenshots on fresh simulators")
     previews_parser = commands.add_parser(
         "previews", help="capture screens into .local/ui-previews in the warm simulator this Mac's apps share")
+    previews_parser.add_argument("--appearance", choices=("light", "dark"), default="dark")
     previews_parser.add_argument("screens", nargs="*", help="CaptureScreen IDs from Apple/App/Capture.swift; all when omitted")
     commands.add_parser("stop", help="shut down the shared warm simulator")
     args = parser.parse_args()
     if args.command == "app-store":
         app_store()
     elif args.command == "previews":
-        previews(args.screens)
+        previews(args.screens, args.appearance)
     else:
         stop()
 

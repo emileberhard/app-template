@@ -1,11 +1,10 @@
-import StarterCore
 import SwiftUI
 
 struct ContentView: View {
+    let daysLeft: Int
+
     var body: some View {
-        TimelineView(.everyMinute) { context in
-            DaysLeftView(daysLeft: daysRemainingInYear(on: context.date, calendar: .current))
-        }
+        DaysLeftView(daysLeft: daysLeft)
     }
 }
 

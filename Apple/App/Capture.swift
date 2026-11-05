@@ -4,19 +4,11 @@ import UIKit
 
 enum CaptureScreen: String, CaseIterable {
     case daysLeft = "days-left"
-    case daysLeftDark = "days-left-dark"
-
-    var style: UIUserInterfaceStyle {
-        switch self {
-        case .daysLeft: .light
-        case .daysLeftDark: .dark
-        }
-    }
 
     @ViewBuilder var content: some View {
         switch self {
-        case .daysLeft, .daysLeftDark:
-            DaysLeftView(daysLeft: 58)
+        case .daysLeft:
+            ContentView(daysLeft: 58)
         }
     }
 
@@ -43,6 +35,7 @@ struct CaptureView: View {
     let directory: URL
     @State private var screen: CaptureScreen?
     @State private var appeared = AsyncStream.makeStream(of: CaptureScreen.self)
+    @State private var cleared = AsyncStream.makeStream(of: Void.self)
 
     var body: some View {
         Group {
@@ -51,7 +44,7 @@ struct CaptureView: View {
                     .transaction { $0.disablesAnimations = true }
                     .onAppear { appeared.continuation.yield(screen) }
             } else {
-                Color.clear
+                Color.clear.onAppear { cleared.continuation.yield(()) }
             }
         }
         .id(screen)
@@ -71,23 +64,28 @@ struct CaptureView: View {
         try FileManager.default.createDirectory(at: directory.appending(path: "jpg"), withIntermediateDirectories: true)
         UIView.setAnimationsEnabled(false)
         let window = try await keyWindow()
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = window.traitCollection.displayScale
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
+        switch ProcessInfo.processInfo.environment["STARTER_CAPTURE_APPEARANCE"] {
+        case "light": window.overrideUserInterfaceStyle = .light
+        case "dark": window.overrideUserInterfaceStyle = .dark
+        default: throw CaptureError("invalid capture appearance")
+        }
         var shown = appeared.stream.makeAsyncIterator()
+        var blank = cleared.stream.makeAsyncIterator()
+        _ = await blank.next(isolation: #isolation)
         let thumbnails = try await withThrowingTaskGroup(of: (String, UIImage).self) { group in
             for next in screens {
-                window.overrideUserInterfaceStyle = next.style
                 screen = next
                 guard await shown.next(isolation: #isolation) == next else {
                     throw CaptureError("\(next.rawValue) did not appear")
                 }
-                await Task.yield()
-                let image = try await snapshot(of: window, with: renderer)
+                try await settle(window, screen: next)
+                let image = try await screenshot(next)
                 let id = next.rawValue
                 let directory = directory
                 group.addTask { (id, try await CaptureFiles.write(image, named: id, into: directory)) }
+                screen = nil
+                _ = await blank.next(isolation: #isolation)
+                try await settle(window, screen: next)
             }
             var thumbnails: [String: UIImage] = [:]
             for try await (id, thumbnail) in group {
@@ -110,15 +108,37 @@ struct CaptureView: View {
         }
     }
 
-    private func snapshot(of window: UIWindow, with renderer: UIGraphicsImageRenderer) async throws -> UIImage {
-        while true {
+    private func settle(_ window: UIWindow, screen: CaptureScreen) async throws {
+        var previous = try await drawnFrame(of: window, screen: screen)
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(33))
+            let next = try await drawnFrame(of: window, screen: screen)
+            if next == previous { return }
+            previous = next
+        }
+        throw CaptureError("\(screen.rawValue) did not settle")
+    }
+
+    private func drawnFrame(of window: UIWindow, screen: CaptureScreen) async throws -> Data {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = window.traitCollection.displayScale
+        format.opaque = true
+        for _ in 0..<30 {
             var complete = false
-            let image = renderer.image { _ in
+            let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
                 complete = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
-            if complete {
-                return image
-            }
+            if complete, let data = image.cgImage?.dataProvider?.data as Data? { return data }
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        throw CaptureError("could not draw a complete frame for \(screen.rawValue)")
+    }
+
+    private func screenshot(_ screen: CaptureScreen) async throws -> UIImage {
+        let file = directory.appending(path: "\(screen.rawValue).png")
+        try Data(screen.rawValue.utf8).write(to: directory.appending(path: "ready"), options: .atomic)
+        while true {
+            if let image = UIImage(contentsOfFile: file.path()) { return image }
             try await Task.sleep(for: .milliseconds(20))
         }
     }
@@ -155,10 +175,6 @@ nonisolated private enum CaptureFiles {
     static let thumbnailHeight: CGFloat = 900
 
     @concurrent static func write(_ image: UIImage, named id: String, into directory: URL) async throws -> UIImage {
-        guard let png = image.pngData() else {
-            throw CaptureError("could not encode \(id) as PNG")
-        }
-        try png.write(to: directory.appending(path: "\(id).png"), options: .atomic)
         let points = thumbnailHeight / image.scale
         guard let thumbnail = image.preparingThumbnail(of: CGSize(width: image.size.width * points / image.size.height, height: points)),
               let jpeg = thumbnail.jpegData(compressionQuality: 0.8) else {
