@@ -115,8 +115,8 @@ release notes.
    manual release and, once the app has a release, submits it for App Review. It waits for every screenshot placement
    to become active or reach a documented parent review state; unknown states
    keep waiting, and a timeout reports the last placement states.
-   A newer tag withdraws an older version from review; before the app's
-   first release, a version in review leaves preparation pending with a notice.
+   A version waiting for or in review is never withdrawn: preparation of the
+   newer tag stays pending with a notice until that version is released.
 5. `github-release` publishes the release and marks it Latest only when its
    version is still the newest plain version tag, including on a later retry.
 
