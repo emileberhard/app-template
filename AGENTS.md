@@ -55,7 +55,11 @@ simulator appearance after capture.
 
 - `CaptureScreen` in `Apple/App/Capture.swift` is the one catalog of screens.
   Give every main screen and state its case as it lands, such as empty, loaded
-  and error. `APP_STORE_SCREENS` in `capture` picks the App Store screenshots.
+  and error. `APP_STORE_SCREENS` in `capture` picks the App Store screenshots
+  and `APP_STORE_DISPLAYS` their placement groups. The release replaces only
+  the groups it captures, so an app whose live version shows screenshots in
+  another group, such as `IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE` from an
+  iPhone 18 Pro Max, captures that group instead of leaving it stale.
 - A case reaches the real screen through the app's root and navigation with
   deterministic fixtures: no network, clock, permission prompt or stored data.
   Freeze animated and clock-driven views. A screen that loads asynchronously
