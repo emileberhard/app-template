@@ -99,9 +99,10 @@
   still use fresh simulators deleted afterwards, so release images carry no
   development state. Runtimes are chosen among plain iOS runtimes only; a
   device-specific runtime also reports the iOS platform but cannot run other
-  devices. Slides are written only after the screenshot simulators are deleted:
-  in AgenTTY's composer, `ImageRenderer` drew an empty canvas on a hosted runner
-  while a simulator was booted.
+  devices. An app that frames its slides with SwiftUI draws them through
+  `ImageRenderer.render` into its own Core Graphics bitmap: on hosted runners
+  `ImageRenderer.cgImage` returned fully transparent images in four of five of
+  AgenTTY's CI captures.
 - **Capture beside the build.** The release's `screenshots` job needs only
   `admit`, holds no credentials and hands its slides to `app-store` as an
   artifact, so App Review waits for neither a capture after TestFlight nor a Mac
