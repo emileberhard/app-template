@@ -46,19 +46,19 @@ def send(request):
             with urllib.request.urlopen(request, timeout=60) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
-            if (error.code == 401 and request.get_method() == "GET" and not refreshed and attempt < 5
-                    and request.full_url.startswith(API) and request.has_header("Authorization")):
-                error.close()
-                request.add_header("Authorization", f"Bearer {token()}")
-                refreshed = True
-                continue
-            retryable = error.code == 429 or error.code >= 500 and request.get_method() != "POST"
-            if not retryable or attempt == 5:
-                raise RequestFailed(f"{request.get_method()} {request.full_url} failed with {error.code}: {error.read().decode(errors='replace')[:2000]}")
-            delay = error.headers.get("Retry-After")
+            with error:
+                if (error.code == 401 and request.get_method() == "GET" and not refreshed and attempt < 5
+                        and request.full_url.startswith(API) and request.has_header("Authorization")):
+                    request.add_header("Authorization", f"Bearer {token()}")
+                    refreshed = True
+                    continue
+                retryable = error.code == 429 or error.code >= 500 and request.get_method() != "POST"
+                if not retryable or attempt == 5:
+                    raise RequestFailed(f"{request.get_method()} {request.full_url.split('?')[0]} failed with {error.code}: {error.read().decode(errors='replace')[:2000]}")
+                delay = error.headers.get("Retry-After")
         except (urllib.error.URLError, TimeoutError) as error:
             if request.get_method() == "POST" or attempt == 5:
-                raise RequestFailed(f"{request.get_method()} {request.full_url} failed: {error}")
+                raise RequestFailed(f"{request.get_method()} {request.full_url.split('?')[0]} failed: {error}")
             delay = None
         time.sleep(float(delay) if delay and delay.isdigit() else 2 ** attempt * random.uniform(0.5, 1))
 
@@ -261,7 +261,7 @@ def processed_build(app, version, number):
     return builds[0]["id"] if state == "VALID" else None
 
 
-def submit_beta(app, version, build, notes):
+def set_test_notes(app, build, notes):
     localizations = api("GET", f"builds/{build}/betaBuildLocalizations", limit=50)
     if not localizations:
         locale = api("GET", f"apps/{app}")["attributes"]["primaryLocale"]
@@ -270,6 +270,9 @@ def submit_beta(app, version, build, notes):
     for localization in localizations:
         api("PATCH", f"betaBuildLocalizations/{localization['id']}", {"type": "betaBuildLocalizations",
             "id": localization["id"], "attributes": {"whatsNew": notes}})
+
+
+def submit_beta(app, version, build):
     groups = api("GET", "betaGroups", limit=200, **{"filter[app]": app, "filter[isInternalGroup]": "false"})
     if not groups:
         print(f"The {version} build reaches the internal testers; the app has no external group to submit it to.", file=sys.stderr)
@@ -301,15 +304,80 @@ def wait_for_screenshots(placements):
         time.sleep(20)
 
 
+VERSION_FIELDS = {"description": "description", "keywords": "keywords", "promotional_text": "promotionalText", "support_url": "supportUrl"}
+INFO_FIELDS = {"name": "name", "subtitle": "subtitle", "privacy_url": "privacyPolicyUrl"}
+
+
+def read_fields(directory, fields):
+    return {attribute: (directory / f"{name}.txt").read_text().strip() for name, attribute in fields.items() if (directory / f"{name}.txt").exists()}
+
+
+def differing(current, wanted):
+    return {key: value for key, value in wanted.items() if (current.get(key) or "") != value}
+
+
+def update(kind, record, current, wanted):
+    changes = differing(current, wanted)
+    if changes:
+        api("PATCH", f"{kind}/{record}", {"type": kind, "id": record, "attributes": changes})
+    return sorted(changes)
+
+
+def apply_metadata(app, version_id, root, notes):
+    directories = {directory.name: directory for directory in root.iterdir() if directory.is_dir()} if root.is_dir() else {}
+    existing = {entry["attributes"]["locale"]: entry for entry in
+                api("GET", f"appStoreVersions/{version_id}/appStoreVersionLocalizations", limit=50)}
+    infos = [info for info in api("GET", f"apps/{app}/appInfos") if info["attributes"]["state"] in EDITABLE] if directories else []
+    info_locales = {entry["attributes"]["locale"]: entry for entry in
+                    api("GET", f"appInfos/{infos[0]['id']}/appInfoLocalizations", limit=50)} if infos else {}
+    for locale in sorted(directories.keys() | existing.keys()):
+        directory = directories.get(locale)
+        wanted = (read_fields(directory, VERSION_FIELDS) if directory else {}) | ({"whatsNew": notes} if notes else {})
+        if locale not in existing:
+            api("POST", "appStoreVersionLocalizations", {"type": "appStoreVersionLocalizations", "attributes": {"locale": locale} | wanted,
+                "relationships": {"appStoreVersion": link("appStoreVersions", version_id)}})
+            changed = sorted(wanted)
+        else:
+            changed = update("appStoreVersionLocalizations", existing[locale]["id"], existing[locale]["attributes"], wanted)
+        wanted_info = read_fields(directory, INFO_FIELDS) if directory else {}
+        if locale in info_locales:
+            changed += update("appInfoLocalizations", info_locales[locale]["id"], info_locales[locale]["attributes"], wanted_info)
+        elif wanted_info and not infos:
+            print(f"::notice::The app info is not editable, so the {locale} name, subtitle and privacy URL stay as they are.", file=sys.stderr)
+        elif wanted_info:
+            api("POST", "appInfoLocalizations", {"type": "appInfoLocalizations", "attributes": {"locale": locale} | wanted_info,
+                "relationships": {"appInfo": link("appInfos", infos[0]["id"])}})
+            changed += sorted(wanted_info)
+        print(f"Updated {', '.join(changed) or 'nothing'} for {locale}.", file=sys.stderr)
+
+
+def check_version(app, version):
+    released = [v["attributes"]["versionString"] for v in api("GET", f"apps/{app}/appStoreVersions", **{"filter[platform]": "IOS", "limit": 200})
+                if v["attributes"]["appVersionState"] in RELEASED]
+    uploaded = [v["attributes"]["version"] for v in api("GET", "preReleaseVersions", **{"filter[app]": app, "filter[platform]": "IOS", "limit": 200})]
+    if version in released:
+        sys.exit(f"App Store version {version} is already released.")
+    newer = sorted({v for v in released + uploaded if parse(v) > parse(version)}, key=parse)
+    if newer:
+        sys.exit(f"{version} must exceed the App Store and TestFlight version {newer[-1]}.")
+
+
+def what_to_test(app, version, number, notes):
+    build = wait(f"The {version} build", lambda: processed_build(app, version, number))
+    set_test_notes(app, build, notes)
+    print(f"Set What to Test for the {version} build; TestFlight distribution stays manual.", file=sys.stderr)
+
+
 def testflight(app, version, number, notes):
     build = wait(f"The {version} build", lambda: processed_build(app, version, number))
-    submit_beta(app, version, build, notes)
+    set_test_notes(app, build, notes)
+    submit_beta(app, version, build)
 
 
-def app_store(app, version, number, screenshots, notes):
+def app_store(app, version, number, metadata, screenshots, notes):
     root = Path(screenshots)
     slides = {directory.name: sorted(p for p in directory.glob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
-              for directory in root.iterdir() if directory.is_dir()} if root.is_dir() else {}
+              for directory in sorted(root.iterdir()) if directory.is_dir()} if root.is_dir() else {}
     if not slides:
         sys.exit(f"Capture the screenshots into one {root} subdirectory per placement group first.")
     for display, files in slides.items():
@@ -318,6 +386,7 @@ def app_store(app, version, number, screenshots, notes):
     version_id, released = draft_version(app, version)
     if version_id is None:
         return
+    apply_metadata(app, version_id, Path(metadata), notes if released else None)
     library = api("GET", f"apps/{app}/assetLibrary")["id"]
     images = {}
     created = queue.SimpleQueue()
@@ -327,9 +396,6 @@ def app_store(app, version, number, screenshots, notes):
             for display, files in slides.items():
                 images[display] = list(pool.map(lambda slide: upload(library, slide, created), files))
         for localization in api("GET", f"appStoreVersions/{version_id}/appStoreVersionLocalizations", limit=50):
-            if released:
-                api("PATCH", f"appStoreVersionLocalizations/{localization['id']}", {"type": "appStoreVersionLocalizations",
-                    "id": localization["id"], "attributes": {"whatsNew": notes}})
             for display, identifiers in images.items():
                 placed, replaced = place(localization["id"], identifiers, display)
                 placements += placed
@@ -367,6 +433,9 @@ def main(command, *arguments):
     if command == "next-build-number":
         print(next_build_number(apps[0]["id"]))
         return
+    if command == "check-version":
+        check_version(apps[0]["id"], arguments[0])
+        return
     if command == "build-number":
         version, reserved, fence = arguments
         if fence not in {"fenced", "open"}:
@@ -378,16 +447,18 @@ def main(command, *arguments):
         return
     version, number, *paths = arguments
     notes = Path(paths[-1]).read_text().strip()
-    if command == "testflight":
+    if command == "what-to-test":
+        what_to_test(apps[0]["id"], version, number, notes)
+    elif command == "testflight":
         testflight(apps[0]["id"], version, number, notes)
     else:
-        app_store(apps[0]["id"], version, number, paths[0], notes)
+        app_store(apps[0]["id"], version, number, *paths[:2], notes)
 
 
 if __name__ == "__main__":
-    counts = {"next-build-number": 2, "build-number": 5, "testflight": 5, "app-store": 6}
+    counts = {"next-build-number": 2, "check-version": 3, "build-number": 5, "what-to-test": 5, "testflight": 5, "app-store": 7}
     if len(sys.argv) != counts.get(sys.argv[1] if len(sys.argv) > 1 else "", 0):
-        sys.exit("Usage: scripts/app-store-connect next-build-number\n       scripts/app-store-connect build-number VERSION RESERVED fenced|open\n       scripts/app-store-connect testflight VERSION BUILD NOTES\n       scripts/app-store-connect app-store VERSION BUILD SCREENSHOTS NOTES")
+        sys.exit("Usage: scripts/app-store-connect next-build-number\n       scripts/app-store-connect check-version VERSION\n       scripts/app-store-connect build-number VERSION RESERVED fenced|open\n       scripts/app-store-connect what-to-test VERSION BUILD NOTES\n       scripts/app-store-connect testflight VERSION BUILD NOTES\n       scripts/app-store-connect app-store VERSION BUILD METADATA SCREENSHOTS NOTES")
     try:
         main(*sys.argv[1:])
     except RequestFailed as failure:

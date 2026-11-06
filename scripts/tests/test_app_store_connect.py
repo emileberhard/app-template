@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
@@ -10,6 +11,12 @@ loader = importlib.machinery.SourceFileLoader("app_store_connect", str(Path(__fi
 spec = importlib.util.spec_from_loader(loader.name, loader)
 asc = importlib.util.module_from_spec(spec)
 loader.exec_module(asc)
+
+
+def setUpModule():
+    quiet = patch("sys.stderr", new_callable=io.StringIO)
+    quiet.start()
+    unittest.addModuleCleanup(quiet.stop)
 
 
 class ScreenshotProcessingTests(unittest.TestCase):
@@ -300,9 +307,104 @@ class UploadCleanupTests(unittest.TestCase):
                 {"url": "https://example.com/upload", "offset": 0, "length": 13, "method": "PUT", "requestHeaders": []}
             ]}}
             with patch.object(asc, "draft_version", return_value=("version", False)), \
+                 patch.object(asc, "apply_metadata"), \
                  patch.object(asc, "api", side_effect=[{"id": "library"}, reservation]), \
                  patch.object(asc, "send", side_effect=asc.RequestFailed("transfer failed")), \
                  patch.object(asc, "delete_unplaced") as cleanup:
                 with self.assertRaisesRegex(asc.RequestFailed, "transfer failed"):
-                    asc.app_store("app", "1.3.2", "11", root, "notes")
+                    asc.app_store("app", "1.3.2", "11", root / "metadata", root, "notes")
                 cleanup.assert_called_once_with(["reserved"])
+
+
+class MetadataTests(unittest.TestCase):
+    def test_only_text_that_differs_is_sent(self):
+        self.assertEqual({"keywords": "ssh"}, asc.differing({"description": "d", "keywords": "x"}, {"description": "d", "keywords": "ssh"}))
+        self.assertEqual({"subtitle": "s"}, asc.differing({"subtitle": None}, {"subtitle": "s"}))
+
+    def test_files_map_to_store_fields_and_are_trimmed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "privacy_url.txt").write_text("https://example.com/privacy\n")
+            (directory / "name.txt").write_text("App\n")
+            self.assertEqual({"privacyPolicyUrl": "https://example.com/privacy", "name": "App"}, asc.read_fields(directory, asc.INFO_FIELDS))
+
+    def test_a_released_app_info_is_never_patched(self):
+        calls = []
+
+        def api(method, path, data=None, **params):
+            calls.append((method, path))
+            if path.endswith("/appStoreVersionLocalizations"):
+                return [{"id": "loc", "attributes": {"locale": "en-US", "description": "old"}}]
+            if path.endswith("/appInfos"):
+                return [{"id": "info", "attributes": {"state": "READY_FOR_DISTRIBUTION"}}]
+            return None
+
+        with tempfile.TemporaryDirectory() as temporary:
+            locale = Path(temporary) / "en-US"
+            locale.mkdir()
+            (locale / "description.txt").write_text("new")
+            (locale / "name.txt").write_text("App")
+            with patch.object(asc, "api", side_effect=api):
+                asc.apply_metadata("app", "version", Path(temporary), "- Fixed it.")
+        self.assertEqual([("PATCH", "appStoreVersionLocalizations/loc")], [call for call in calls if call[0] == "PATCH"])
+        self.assertNotIn("appInfoLocalizations", " ".join(path for _, path in calls))
+
+
+class VersionAndMetadataTests(unittest.TestCase):
+    def test_only_a_newer_unreleased_version_is_accepted(self):
+        responses = [[{"attributes": {"versionString": "2.13.0", "appVersionState": "READY_FOR_DISTRIBUTION"}},
+                      {"attributes": {"versionString": "2.14.0", "appVersionState": "PREPARE_FOR_SUBMISSION"}}],
+                     [{"attributes": {"version": "2.13.1"}}]]
+        for version, refusal in (("2.13.0", "already released"), ("2.12.9", "must exceed.*2.13.1"),
+                                 ("2.13.1", None), ("2.13.2", None)):
+            with self.subTest(version=version), patch.object(asc, "api", side_effect=list(responses)) as api:
+                if refusal:
+                    with self.assertRaisesRegex(SystemExit, refusal):
+                        asc.check_version("app", version)
+                else:
+                    asc.check_version("app", version)
+                self.assertEqual(["apps/app/appStoreVersions", "preReleaseVersions"], [call.args[1] for call in api.call_args_list])
+                self.assertEqual("app", api.call_args_list[1].kwargs["filter[app]"])
+
+    def test_an_editable_app_info_is_patched_and_whats_new_only_follows_a_release(self):
+        calls = []
+
+        def api(method, path, data=None, **params):
+            calls.append((method, path, data and data["attributes"]))
+            if path.endswith("/appStoreVersionLocalizations"):
+                return [{"id": "loc", "attributes": {"locale": "en-US", "description": "same", "whatsNew": "old"}}]
+            if path.endswith("/appInfos"):
+                return [{"id": "info", "attributes": {"state": "PREPARE_FOR_SUBMISSION"}}]
+            if path.endswith("/appInfoLocalizations"):
+                return [{"id": "infoloc", "attributes": {"locale": "en-US", "name": "Old"}}]
+            return None
+
+        with tempfile.TemporaryDirectory() as temporary:
+            locale = Path(temporary) / "en-US"
+            locale.mkdir()
+            (locale / "description.txt").write_text("same")
+            (locale / "name.txt").write_text("New")
+            with patch.object(asc, "api", side_effect=api):
+                asc.apply_metadata("app", "version", Path(temporary), None)
+                asc.apply_metadata("app", "version", Path(temporary), "- Fixed it.")
+        patches = [call for call in calls if call[0] == "PATCH"]
+        self.assertEqual([("PATCH", "appInfoLocalizations/infoloc", {"name": "New"}),
+                          ("PATCH", "appStoreVersionLocalizations/loc", {"whatsNew": "- Fixed it."}),
+                          ("PATCH", "appInfoLocalizations/infoloc", {"name": "New"})], patches)
+
+
+class TestFlightPolicyTests(unittest.TestCase):
+    def test_what_to_test_never_adds_external_groups(self):
+        calls = []
+
+        def api(method, path, data=None, **params):
+            calls.append((method, path))
+            if path == "builds":
+                return [{"id": "build", "attributes": {"processingState": "VALID"}}]
+            if path == "builds/build/betaBuildLocalizations":
+                return [{"id": "notes"}]
+
+        with patch.object(asc, "api", side_effect=api):
+            asc.what_to_test("app", "1.3.2", "11", "- Fixed it.")
+        self.assertEqual([("PATCH", "betaBuildLocalizations/notes")], [call for call in calls if call[0] != "GET"])
+        self.assertNotIn("betaGroups", " ".join(path for _, path in calls))

@@ -1,3 +1,6 @@
+# The Xcode that .xcode-version names, as CI and the release use; callers may explicitly override it.
+export DEVELOPER_DIR := if os() == "macos" { shell('if [ -n "${DEVELOPER_DIR:-}" ]; then echo "$DEVELOPER_DIR"; else scripts/select-xcode; fi') } else { "" }
+
 default:
     @just --list
 

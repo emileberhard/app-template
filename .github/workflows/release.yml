@@ -63,6 +63,7 @@ jobs:
       - name: Reserve the next global build number
         id: reserve
         env:
+          VERSION: ${{ github.ref_name }}
           APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
           APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -71,6 +72,7 @@ jobs:
         run: |
           umask 077
           printf '%s' "$APP_STORE_CONNECT_KEY" > "$APP_STORE_CONNECT_KEY_PATH"
+          scripts/app-store-connect check-version "$VERSION"
           echo "build=$(scripts/app-store-connect next-build-number)" >> "$GITHUB_OUTPUT"
 
       - name: Remove credentials
@@ -245,7 +247,7 @@ jobs:
           printf '%s' "$APP_STORE_CONNECT_KEY" > "$APP_STORE_CONNECT_KEY_PATH"
           tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq .object.sha)
           gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag" --jq .message > "$RUNNER_TEMP/notes.md"
-          scripts/app-store-connect app-store "$VERSION" "$BUILD_NUMBER" .local/screenshots "$RUNNER_TEMP/notes.md"
+          scripts/app-store-connect app-store "$VERSION" "$BUILD_NUMBER" Apple/AppStore/metadata .local/screenshots "$RUNNER_TEMP/notes.md"
 
   github-release:
     needs: [admit, testflight]
