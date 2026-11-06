@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -40,7 +41,7 @@ def cancel(signum, frame):
 
 def latest_runtime(devices):
     runtimes = json.loads(run("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"]
-    supported = [r for r in runtimes if r["isAvailable"] and r["platform"] == "iOS"
+    supported = [r for r in runtimes if r["isAvailable"] and re.fullmatch(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-\d+(-\d+)*", r["identifier"])
                  and all(any(t["name"] == device for t in r["supportedDeviceTypes"]) for device in devices)]
     if not supported:
         raise SystemExit(f"Install an iOS simulator runtime supporting {', '.join(devices)}.")
@@ -57,7 +58,8 @@ def build():
     run("xcodebuild", "-quiet", "-project", ROOT / "Apple/Starter.xcodeproj", "-scheme", "Starter",
         "-configuration", "Debug", "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", BUILD,
         "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile", "-skipPackageUpdates",
-        f"ARCHS={platform.machine()}", "CODE_SIGNING_ALLOWED=NO", "COMPILER_INDEX_STORE_ENABLE=NO", "build")
+        f"ARCHS={platform.machine()}", "CODE_SIGN_IDENTITY=-", "CODE_SIGN_STYLE=Manual", "DEVELOPMENT_TEAM=",
+        "PROVISIONING_PROFILE_SPECIFIER=", "COMPILER_INDEX_STORE_ENABLE=NO", "build")
     return run("plutil", "-extract", "CFBundleIdentifier", "raw", APP / "Info.plist")
 
 
@@ -197,21 +199,21 @@ def app_store():
         try:
             run("xcrun", "simctl", "bootstatus", udid, "-b")
             run("xcrun", "simctl", "install", udid, APP)
-            raw = ROOT / ".local/screenshot-captures" / display
             with simulator_appearance(udid, "light"):
-                capture(udid, bundle, raw, APP_STORE_SCREENS, appearance="light", timeout=300)
-            slides = ROOT / ".local/screenshots" / display
-            shutil.rmtree(slides, ignore_errors=True)
-            slides.mkdir(parents=True)
-            for position, screen in enumerate(APP_STORE_SCREENS, start=1):
-                slide = slides / f"{position:02}-{screen}.png"
-                shutil.copyfile(raw / f"{screen}.png", slide)
-                print(slide, flush=True)
+                capture(udid, bundle, ROOT / ".local/screenshot-captures" / display, APP_STORE_SCREENS, appearance="light", timeout=300)
         finally:
             subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
             deletion = subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True)
             if deletion.returncode:
                 raise RuntimeError(f"Could not delete screenshot simulator {udid}: {deletion.stderr.decode()}")
+    for display in APP_STORE_DISPLAYS:
+        slides = ROOT / ".local/screenshots" / display
+        shutil.rmtree(slides, ignore_errors=True)
+        slides.mkdir(parents=True)
+        for position, screen in enumerate(APP_STORE_SCREENS, start=1):
+            slide = slides / f"{position:02}-{screen}.png"
+            shutil.copyfile(ROOT / ".local/screenshot-captures" / display / f"{screen}.png", slide)
+            print(slide, flush=True)
 
 
 def main():
@@ -237,4 +239,4 @@ if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as error:
-        raise SystemExit(f"{error.cmd[0]} failed:\n{error.stdout}\n{error.stderr}")
+        raise SystemExit(f"{error.cmd[0]} exited with {error.returncode}:\n{error.stdout}\n{error.stderr}")

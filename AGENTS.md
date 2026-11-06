@@ -62,7 +62,9 @@ simulator appearance after capture.
   signals readiness once its fixture is on screen. Present sheets as sheets.
 - The app waits for matching drawn frames, signals the driver, loads its actual
   Simulator screenshot, then clears the root before the next case. Capture code
-  compiles only in Debug. The driver owns and recreates its `.local/` output.
+  compiles only in Debug. The capture build is ad-hoc signed, so the Keychain
+  and other entitlement-backed APIs work in the Simulator. The driver owns and
+  recreates its `.local/` output.
 - A frame shows layout and rendering, including system chrome and sheets, but
   not interaction, animation, an extension's real host or performance; check
   those on a device.
