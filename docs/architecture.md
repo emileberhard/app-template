@@ -102,6 +102,11 @@
   devices. Slides are written only after the screenshot simulators are deleted:
   in AgenTTY's composer, `ImageRenderer` drew an empty canvas on a hosted runner
   while a simulator was booted.
+- **Capture beside the build.** The release's `screenshots` job needs only
+  `admit`, holds no credentials and hands its slides to `app-store` as an
+  artifact, so App Review waits for neither a capture after TestFlight nor a Mac
+  for the App Store Connect calls. It adds one hosted macOS job beside
+  `testflight` for the length of a capture.
 - **Freshness from the incremental build.** Every round runs `xcodebuild`
   instead of skipping it on a hash of chosen source files. Such a stamp misses
   inputs it does not list, such as the package lock, assets and the Xcode

@@ -105,7 +105,9 @@ release notes.
    marks the spot.
 3. `testflight-review` sets What to Test; when the app has external groups, it
    adds the build to them and submits it for beta review.
-4. `app-store` captures the screenshots and prepares the App Store version with
+4. `screenshots` needs only `admit` and holds no credentials: beside
+   `testflight`, it captures the screenshots and uploads them as an artifact.
+   `app-store`, on Linux, downloads them and prepares the App Store version with
    manual release and, once the app has a release, submits it for App Review. It waits for every screenshot placement
    to become active or reach a documented parent review state; unknown states
    keep waiting, and a timeout reports the last placement states.
