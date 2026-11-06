@@ -97,7 +97,11 @@
   one simulator for all device types would be recreated and cold-booted
   whenever apps on different devices alternate. The App Store screenshots
   still use fresh simulators deleted afterwards, so release images carry no
-  development state.
+  development state. Runtimes are chosen among plain iOS runtimes only; a
+  device-specific runtime also reports the iOS platform but cannot run other
+  devices. Slides are written only after the screenshot simulators are deleted:
+  in AgenTTY's composer, `ImageRenderer` drew an empty canvas on a hosted runner
+  while a simulator was booted.
 - **Freshness from the incremental build.** Every round runs `xcodebuild`
   instead of skipping it on a hash of chosen source files. Such a stamp misses
   inputs it does not list, such as the package lock, assets and the Xcode
