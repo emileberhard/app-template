@@ -24,7 +24,7 @@ APP_STORE_DISPLAYS = {
     "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE": "iPhone 18 Pro",
     "IPAD_13_PROFILE": "iPad Pro 13-inch (M5)",
 }
-PREVIEW_DEVICE = "iPhone 18 Pro"
+PREVIEW_DEVICES = {"iphone": "iPhone 18 Pro", "ipad": "iPad Pro 13-inch (M5)"}
 SHARED_SIMULATORS = Path.home() / "Library" / "Caches" / "ui-previews"
 LOCALE = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
 STATUS_BAR = ["--time", datetime(2007, 1, 9, 9, 41).astimezone().isoformat(timespec="milliseconds"), "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",
@@ -134,11 +134,11 @@ def simulator_appearance(udid, appearance):
 
 
 @contextmanager
-def locked_simulator_record():
+def locked_simulator_record(device):
     SHARED_SIMULATORS.mkdir(parents=True, exist_ok=True)
     with open(SHARED_SIMULATORS / "lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        yield SHARED_SIMULATORS / f"{PREVIEW_DEVICE}.udid"
+        yield SHARED_SIMULATORS / f"{device}.udid"
 
 
 def recorded_simulator(record):
@@ -150,28 +150,28 @@ def recorded_simulator(record):
 
 
 @contextmanager
-def warm_simulator():
-    with locked_simulator_record() as record:
+def warm_simulator(device):
+    with locked_simulator_record(device) as record:
         udid, runtime, state = recorded_simulator(record)
-        latest = latest_runtime([PREVIEW_DEVICE])
+        latest = latest_runtime([device])
         if state is not None and runtime != latest:
             if state == "Booted":
                 run("xcrun", "simctl", "shutdown", udid)
             run("xcrun", "simctl", "delete", udid)
             state = None
         if state is None:
-            udid = run("xcrun", "simctl", "create", f"UI Previews ({PREVIEW_DEVICE})", PREVIEW_DEVICE, latest)
+            udid = run("xcrun", "simctl", "create", f"UI Previews ({device})", device, latest)
             record.write_text(udid)
         if state != "Booted":
             run("xcrun", "simctl", "bootstatus", udid, "-b")
         yield udid
 
 
-def previews(screens, appearance):
+def previews(screens, appearance, device):
     started = time.monotonic()
     bundle = build()
     built = time.monotonic()
-    with warm_simulator() as udid:
+    with warm_simulator(PREVIEW_DEVICES[device]) as udid:
         run("xcrun", "simctl", "install", udid, APP)
         with simulator_appearance(udid, appearance):
             ids = capture(udid, bundle, PREVIEWS, screens, appearance=appearance, timeout=90)
@@ -184,11 +184,14 @@ def previews(screens, appearance):
 
 
 def stop():
-    with locked_simulator_record() as record:
-        udid, _, state = recorded_simulator(record)
-        if state == "Booted":
-            run("xcrun", "simctl", "shutdown", udid)
-    print(json.dumps({"stopped": udid if state == "Booted" else None}))
+    stopped = []
+    for device in PREVIEW_DEVICES.values():
+        with locked_simulator_record(device) as record:
+            udid, _, state = recorded_simulator(record)
+            if state == "Booted":
+                run("xcrun", "simctl", "shutdown", udid)
+                stopped.append(udid)
+    print(json.dumps({"stopped": stopped}))
 
 
 def app_store():
@@ -223,13 +226,14 @@ def main():
     previews_parser = commands.add_parser(
         "previews", help="capture screens into .local/ui-previews in the warm simulator this Mac's apps share")
     previews_parser.add_argument("--appearance", choices=("light", "dark"), default="dark")
+    previews_parser.add_argument("--device", choices=tuple(PREVIEW_DEVICES), default="iphone")
     previews_parser.add_argument("screens", nargs="*", help="CaptureScreen IDs from Apple/App/Capture.swift; all when omitted")
-    commands.add_parser("stop", help="shut down the shared warm simulator")
+    commands.add_parser("stop", help="shut down the shared warm simulators")
     args = parser.parse_args()
     if args.command == "app-store":
         app_store()
     elif args.command == "previews":
-        previews(args.screens, args.appearance)
+        previews(args.screens, args.appearance, args.device)
     else:
         stop()
 
