@@ -13,7 +13,7 @@ this file true as the app grows.
 | `Apple/Starter.xcodeproj` | The Xcode project in the JSON `project.xcproj` format; edit it as JSON or in Xcode |
 | `Apple/App/` | The app target's code and assets, a synchronized folder: new files need no project edit |
 | `Apple/Config/` | `Starter.xcconfig` for build settings and identity, `entitlements.json`, `ExportOptions.plist` |
-| `Apple/AppStore/` | `capture`, which records the App Store screenshots and the UI previews from the app itself |
+| `Apple/AppStore/` | `capture`, which records the App Store screenshots and the UI previews from the app itself, and optional `metadata/<locale>/*.txt` store text |
 | `scripts/` | CI and release helpers: `select-xcode`, `sign-bundles` and `app-store-connect` |
 | `.xcode-version` | The Xcode that CI and the release build with |
 | `docs/architecture.md` | Goals, decisions and what is expensive to change |

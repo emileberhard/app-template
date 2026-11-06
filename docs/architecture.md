@@ -104,6 +104,22 @@
   version, and returns stale screens. Resolve locked packages again when
   `Package.resolved` changes; a clean build also resolves them before building.
 
+- **Store text from files.** Optional `Apple/AppStore/metadata/<locale>/*.txt`
+  (description, keywords, promotional text, support URL, name, subtitle and
+  privacy URL) is applied to the prepared version, sending only fields that
+  differ; an app info that is no longer editable keeps its name, subtitle and
+  privacy URL. Editing text in App Store Connect by hand would drift from the
+  repository and be overwritten by nothing. AgenTTY carried this first.
+- **Refuse a stale version before reserving.** `numbers` runs `check-version`,
+  which rejects a version already released or below a released or uploaded
+  one, before it reserves a build number, so a wrong tag fails before any
+  upload.
+- **One Xcode locally too.** The justfile exports the `DEVELOPER_DIR` that
+  `select-xcode` finds for `.xcode-version` unless the caller sets one, so local
+  recipes compile with the release's Xcode rather than whichever is selected.
+  An app that keeps TestFlight distribution manual calls `what-to-test` instead
+  of `testflight`.
+
 Record each later decision here with the alternatives it beat.
 
 ## Expensive to change
