@@ -39,14 +39,14 @@ this file true as the app grows.
 | `just test` | Test Core |
 | `just build` | Compile the app for iOS without signing |
 | `just screenshots` | Capture the App Store screenshots into `.local/screenshots/` |
-| `just ui-previews [--appearance light|dark] [screen…]` | Render the app's screens, all by default, into `.local/ui-previews/` |
-| `just ui-previews-stop` | Shut down the warm simulator when the UI work ends |
+| `just ui-previews [--appearance light|dark] [--device iphone|ipad] [screen…]` | Render the app's screens, all by default, into `.local/ui-previews/` |
+| `just ui-previews-stop` | Shut down the warm simulators when the UI work ends |
 
 ## UI previews
 
 `just ui-previews` builds incrementally into `.local/simulator-build`, installs
-into the shared warm simulator under its lock and takes real Simulator
-screenshots. It prints JSON naming `sheet.jpg`, each screen's PNG and 900-pixel
+into the shared warm iPhone simulator, or the iPad one with `--device ipad`,
+under its lock and takes real Simulator screenshots. It prints JSON naming `sheet.jpg`, each screen's PNG and 900-pixel
 JPEG, and the seconds spent building and capturing. Read every screen of the
 sheet after each change; open a PNG only for detail. Pass screen IDs to select
 a subset, or `--appearance light` to change the default dark appearance. App
